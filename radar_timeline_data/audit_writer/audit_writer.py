@@ -23,6 +23,24 @@ from openpyxl.utils import get_column_letter
 
 
 class AuditWriter:
+    """
+    A class to manage the creation and writing of audit documents and spreadsheets.
+
+    This class is responsible for initializing an audit document and spreadsheet,
+    adding headings and paragraphs to the document, and managing the creation of
+    worksheets within the spreadsheet.
+
+    Attributes:
+    - directory (str): The directory where the output files will be saved.
+    - filename (str): The name of the audit file.
+    - document (Document): An instance of the Document class for creating the audit document.
+    - important_High (int): A counter for high importance audit entries.
+    - important_Low (int): A counter for low importance audit entries.
+    - info (dict): A dictionary to store additional information related to the audit.
+    - wb (Workbook): An instance of the Workbook class for creating the audit spreadsheet.
+    - current_worksheet (Worksheet): The current worksheet being written to in the spreadsheet.
+    - worksheets (dict): A dictionary of worksheets within the spreadsheet.
+    """
     def __init__(self, directory: str, filename: str):
         """
         Initializes an AuditWriter object.
@@ -32,13 +50,11 @@ class AuditWriter:
         - filename (str): The name of the audit file.
         """
         self.directory = directory
+        self.filename = filename
         self.document = Document()
         self.__style()
-
         self.document.add_heading("Audit " + filename, 0)
         self.document.add_paragraph("Proccess", style="Heading 1")
-
-        self.filename = filename
         self.important_High = 0
         self.important_Low = 0
         self.info = {}
@@ -48,6 +64,8 @@ class AuditWriter:
         )
         self.current_worksheet = None
         self.worksheets = {}
+
+
 
     def add_change(self, description: str, old: Any, new: Any):
         """
@@ -79,7 +97,7 @@ class AuditWriter:
             run.font.size = Pt(20)
             para.add_run(str(new) + "\n")
 
-    def add_hyperlink(self, paragraph, url, text, color):
+    def add_hyperlink(self, paragraph, url, text):
         """
         Adds a hyperlink to the audit document.
 
@@ -155,7 +173,6 @@ class AuditWriter:
             + (get_column_letter(self.worksheets[self.current_worksheet] + 1))
             + "1",
             table_name,
-            None,
         )
         table.write_excel(
             workbook=self.wb,

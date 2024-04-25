@@ -7,7 +7,7 @@ from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObjec
 
 
 def column_name_and_type_change(
-    df_collection: dict[str, pl.DataFrame]
+        df_collection: dict[str, pl.DataFrame]
 ) -> dict[str, pl.DataFrame]:
     """
     Modify column names and types for the 'ukrdc' DataFrame within the collection.
@@ -37,8 +37,8 @@ def column_name_and_type_change(
 
 
 def group_and_reduce_ukrdc_dataframe(
-    df_collection: dict[str, pl.DataFrame],
-    audit_writer: AuditWriter | StubObject = StubObject(),
+        df_collection: dict[str, pl.DataFrame],
+        audit_writer: AuditWriter | StubObject = StubObject(),
 ) -> pl.DataFrame:
     """
     Group and reduce the combined DataFrame by patient_id and group_id.
@@ -78,7 +78,7 @@ def group_and_reduce_ukrdc_dataframe(
                 col: pl.col(col).first()
                 for col in df_collection["ukrdc"].columns
                 if col
-                not in ["from_date", "to_date", "patient_id", "modality", "group_id"]
+                   not in ["from_date", "to_date", "patient_id", "modality", "group_id"]
             },
         )
     )
@@ -118,7 +118,7 @@ def group_and_reduce_ukrdc_dataframe(
                 col: pl.col(col).first()
                 for col in df_collection["ukrdc"].columns
                 if col
-                not in ["from_date", "to_date", "patient_id", "modality", "group_id"]
+                   not in ["from_date", "to_date", "patient_id", "modality", "group_id"]
             },
         )
         .drop(columns=["group_id", "id", "recent_date"])
@@ -134,7 +134,7 @@ def group_and_reduce_ukrdc_dataframe(
 
 
 def combine_treatment_dataframes(
-    df_collection: dict[str, pl.DataFrame]
+        df_collection: dict[str, pl.DataFrame]
 ) -> pl.DataFrame:
     """
     Combines multiple dataframes into one, handling missing columns by filling nulls diagonally.
@@ -204,7 +204,7 @@ def fill_null_time(added_rows, update_rows) -> tuple[pl.DataFrame, pl.DataFrame]
 
 
 def split_combined_dataframe(
-    full_dataframe, reduced_dataframe
+        full_dataframe: pl.DataFrame, reduced_dataframe: pl.DataFrame
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """
     Splits a combined DataFrame into two separate DataFrames (new , existing) based on the presence of 'id' values.
@@ -310,7 +310,7 @@ def group_and_reduce_combined_dataframe(reduced_dataframe: pl.DataFrame):
 
 
 def group_similar_or_overlapping_range(
-    df: pl.DataFrame, window: List[str], day_overide: int = 5
+        df: pl.DataFrame, window: List[str], day_overide: int = 5
 ) -> pl.DataFrame:
     """
     Group similar or overlapping date ranges within specified window.
@@ -363,31 +363,31 @@ def overlapping_dates_bool_mask(days: int = 5):
     - mask (boolean): A boolean mask indicating overlapping date ranges.
     """
     mask = (
-        (
-            (pl.col("from_date") <= pl.col("prev_to_date"))
-            & (pl.col("from_date") >= pl.col("prev_from_date"))
-        )
-        | (
-            (pl.col("to_date") <= pl.col("prev_to_date"))
-            & (pl.col("to_date") >= pl.col("prev_from_date"))
-        )
-        | (abs(pl.col("to_date") - pl.col("prev_from_date")) <= pl.duration(days=days))
-        | (abs(pl.col("from_date") - pl.col("prev_to_date")) <= pl.duration(days=days))
-        | (
-            abs(pl.col("from_date") - pl.col("prev_from_date"))
-            <= pl.duration(days=days)
-        )
-        | (abs(pl.col("to_date") - pl.col("prev_to_date")) <= pl.duration(days=days))
+            (
+                    (pl.col("from_date") <= pl.col("prev_to_date"))
+                    & (pl.col("from_date") >= pl.col("prev_from_date"))
+            )
+            | (
+                    (pl.col("to_date") <= pl.col("prev_to_date"))
+                    & (pl.col("to_date") >= pl.col("prev_from_date"))
+            )
+            | (abs(pl.col("to_date") - pl.col("prev_from_date")) <= pl.duration(days=days))
+            | (abs(pl.col("from_date") - pl.col("prev_to_date")) <= pl.duration(days=days))
+            | (
+                    abs(pl.col("from_date") - pl.col("prev_from_date"))
+                    <= pl.duration(days=days)
+            )
+            | (abs(pl.col("to_date") - pl.col("prev_to_date")) <= pl.duration(days=days))
     )
     return mask
 
 
 def treatment_table_format_conversion(
-    codes: pl.DataFrame,
-    df_collection: dict[str, pl.DataFrame],
-    satellite: pl.DataFrame,
-    source_group_id_mapping: pl.DataFrame,
-    ukrdc_radar_mapping: pl.DataFrame,
+        codes: pl.DataFrame,
+        df_collection: dict[str, pl.DataFrame],
+        satellite: pl.DataFrame,
+        source_group_id_mapping: pl.DataFrame,
+        ukrdc_radar_mapping: pl.DataFrame,
 ) -> dict[str, pl.DataFrame]:
     """
     Convert data format for UKRDC treatment table.

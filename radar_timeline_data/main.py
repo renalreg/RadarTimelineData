@@ -28,6 +28,7 @@ from radar_timeline_data.utils.polarUtil import (
 )
 
 
+# TODO delete this when done
 def audit():
     population = pl.DataFrame(
         {
@@ -73,6 +74,9 @@ def main(audit_writer: AuditWriter | StubObject = StubObject()):
     # create audit and any flags
     # commit df to radar
 
+    audit()
+    return None
+
     audit_writer.add_text("starting script")
     # innit sessions
     sessions = create_sessions()
@@ -100,8 +104,10 @@ def main(audit_writer: AuditWriter | StubObject = StubObject()):
     )
     audit_writer.add_table_snippets(ukrdc_radar_mapping)
 
-    # treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping)
+    treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping)
+    return None
     rr_radar_mapping = get_rr_to_radarnumber_map(sessions)
+
     transplant_run(
         audit_writer, codes, satellite, sessions, ukrdc_radar_mapping, rr_radar_mapping
     )
@@ -112,48 +118,21 @@ def main(audit_writer: AuditWriter | StubObject = StubObject()):
         session.session.close()
 
 
-def transplant_table_format_conversion(
-    df_collection: dict[str, pl.DataFrame], ukrdc_radar_mapping: pl.DataFrame
-) -> dict[str, pl.DataFrame]:
-    df_collection["rr"] = (
-        df_collection["rr"]
-        .with_columns(
-            patient_id=pl.col("pid").replace(
-                ukrdc_radar_mapping.get_column("pid"),
-                ukrdc_radar_mapping.get_column("patient_id"),
-                default="None",
-            )
-        )
-        .drop(["id", "pid"])
-    )
-
-    return df_collection
-
-
 def transplant_run(
-    audit_writer: AuditWriter | StubObject,
-    codes: pl.DataFrame,
-    satellite: pl.DataFrame,
-    sessions: dict[str, SessionManager],
-    ukrdc_radar_mapping: pl.DataFrame,
-    rr_radar_mapping: pl.DataFrame,
+        audit_writer: AuditWriter | StubObject,
+        codes: pl.DataFrame,
+        satellite: pl.DataFrame,
+        sessions: dict[str, SessionManager],
+        ukrdc_radar_mapping: pl.DataFrame,
+        rr_radar_mapping: pl.DataFrame,
 ):
-    print(ukrdc_radar_mapping)
+    # get transplant data from sessions where radar number
     df_collection = sessions_to_transplant_dfs(
         sessions,
         ukrdc_radar_mapping.get_column("number"),
         rr_radar_mapping.get_column("number"),
     )
 
-    # df_collection = transplant_table_format_conversion(
-    #    df_collection, ukrdc_radar_mapping
-    # )
-    for value in df_collection:
-        print(value + ":\n")
-        print(df_collection[value].columns)
-
-    print(df_collection["rr"])
-    rr_radar_mapping = rr_radar_mapping.unique()
     df_collection["rr"] = df_collection["rr"].with_columns(
         RADAR_NO=pl.col("RR_NO").replace(
             rr_radar_mapping.get_column("number"),
@@ -161,19 +140,30 @@ def transplant_run(
             default="None",
         )
     )
-    with pl.Config(tbl_cols=-1):
-        print(df_collection["rr"])
+    for i in df_collection:
+        print(i)
+        print(df_collection[i].columns)
 
     pass
 
 
-def treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping):
-    # from all sessions get treatment tables
+def treatment_run(audit_writer: AuditWriter | StubObject, codes: pl.DataFrame, satellite: pl.DataFrame,
+                  sessions: dict[str, SessionManager], ukrdc_radar_mapping: pl.DataFrame) -> None:
+    """
+    function that controls the flow of treatment rows/data
+    Args:
+        audit_writer: AuditWriter Object or Stub object for writing dataflow in readable formats
+        codes: map of modality codes and their corresponding equivalent
+        satellite: map of satellites and main units
+        sessions: dictionary of sessions must contain "ukrdc" and "radar"
+        ukrdc_radar_mapping: map of ukrdc localpatientid to radar patient_id
+    """
+
+    # =====================< GET TREATMENTS >==================
     df_collection = sessions_to_treatment_dfs(
         sessions, ukrdc_radar_mapping.get_column("number")
     )
-    # replace id with id_str to use later
-    df_collection["radar"] = df_collection["radar"].drop("id").rename({"id_str": "id"})
+
     audit_writer.add_text("importing Treatment data from:")
     audit_writer.set_ws(worksheet_name="import")
     audit_writer.add_table(
@@ -183,11 +173,15 @@ def treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping)
         text="  RADAR", table=df_collection["radar"], table_name="radar"
     )
     cols = df_collection["ukrdc"].columns
+
     source_group_id_mapping = get_source_group_id_mapping(sessions["radar"])
-    print(source_group_id_mapping)
+
+    # =====================< Formatting >==================
+
     df_collection = treatment_table_format_conversion(
         codes, df_collection, satellite, source_group_id_mapping, ukrdc_radar_mapping
     )
+
     audit_writer.add_change(
         description="converting ukrdc into common formats, includes patient numbers and modality codes ",
         old=cols,
@@ -200,44 +194,58 @@ def treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping)
     )
     # clean up
     del codes, ukrdc_radar_mapping, satellite, cols
+
+    # =====================< REDUCE >==================
+
     # TODO remove this
-    df_collection["ukrdc"] = df_collection["ukrdc"].filter(pl.col("patient_id") == 242)
-    df_collection["radar"] = df_collection["radar"].filter(pl.col("patient_id") == 242)
-    print(df_collection["ukrdc"])
-    # sort by patient id, modality and from date
+    # df_collection["ukrdc"] = df_collection["ukrdc"].filter(pl.col("patient_id") == 242)
+    # df_collection["radar"] = df_collection["radar"].filter(pl.col("patient_id") == 242)
+
     audit_writer.set_ws("group_reduce_Treatment")
     df_collection["ukrdc"] = group_and_reduce_ukrdc_dataframe(
         df_collection, audit_writer
     )
+
+    # =====================< MERGE  >==================
+
     # combine all dataframes into one
-    audit_writer.set_ws("raw_all_Treatment")
-    print(df_collection)
     combined_dataframe = combine_treatment_dataframes(df_collection)
+
+    audit_writer.set_ws("raw_all_Treatment")
     audit_writer.add_table(
         text="combine dataframes",
         table=combined_dataframe,
         table_name="raw_combined_Treatment",
     )
+
     # clean up
     for frame in df_collection:
         df_collection[frame].clear()
     del df_collection
+
     audit_writer.set_ws("group_reduce_all_Treatment")
-    # reduce the dataframe
+
+    # =====================< REDUCE >==================
+
+    # group the combined dataframe and reduce into the first occurrence for each patient-group combination
     reduced_dataframe = group_and_reduce_combined_dataframe(combined_dataframe)
     audit_writer.add_table(
         "reducing_combined_Treatment",
         reduced_dataframe,
         table_name="reduced_combined_Treatment",
     )
-    # new rows
-    print()
+
+    # =====================< SPLIT >==================
+    # split treatments
+    print(reduced_dataframe)
     existing_treatments, new_treatments = split_combined_dataframe(
         combined_dataframe, reduced_dataframe
     )
     # clean up
     del combined_dataframe, reduced_dataframe
+
     audit_writer.set_ws("Treatment_output")
+    # TODO may not be needed as db defaults time
     new_treatments, existing_treatments = fill_null_time(
         new_treatments, existing_treatments
     )
@@ -247,7 +255,10 @@ def treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping)
     audit_writer.add_table(
         text="data to update", table=existing_treatments, table_name="update_Treatment"
     )
-    with pl.Config(tbl_cols=-1, tbl_rows=-1):
+
+    # =====================< WRITE TO DATABASE >==================
+
+    with pl.Config(tbl_cols=-1):
         print(new_treatments)
         print(existing_treatments)
 
