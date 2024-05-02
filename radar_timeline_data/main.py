@@ -5,6 +5,7 @@ import argparse
 from datetime import datetime
 
 import polars as pl
+from sqlalchemy import text
 
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
 from radar_timeline_data.utils.connections import (
@@ -67,24 +68,25 @@ def audit():
 
 
 def main(audit_writer: AuditWriter | StubObject = StubObject()):
-    # init the session connection
-    # prep the dfs
-    # merge dfs
-    # validate dfs
-    # create audit and any flags
-    # commit df to radar
+    """
+    main function for flow of script
+    Args:
+        audit_writer: Object used for writing readable audit files
 
-    audit()
-    return None
+    Returns:
+
+    """
+
+    # =======================< START >====================
 
     audit_writer.add_text("starting script")
-    # innit sessions
     sessions = create_sessions()
 
     # get codes from ukrdc
     codes = get_modality_codes(sessions)
     satellite = get_sattelite_map(sessions["ukrdc"])
 
+    # write tables to audit
     audit_writer.set_ws(worksheet_name="mappings")
     audit_writer.add_table(
         text="Modality Codes:", table=codes, table_name="Modality_Codes"
@@ -94,6 +96,7 @@ def main(audit_writer: AuditWriter | StubObject = StubObject()):
         text="Satellite Units:", table=satellite, table_name="Satellite_Units"
     )
     audit_writer.add_table_snippets(satellite)
+
     # get healthcare facility mapping
     ukrdc_radar_mapping = get_ukrdcid_to_radarnumber_map(sessions)
 
@@ -104,10 +107,11 @@ def main(audit_writer: AuditWriter | StubObject = StubObject()):
     )
     audit_writer.add_table_snippets(ukrdc_radar_mapping)
 
-    treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping)
-    return None
-    rr_radar_mapping = get_rr_to_radarnumber_map(sessions)
+    # =======================< TRANSPLANT AND TREATMENT RUNS >====================
 
+    # treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping)
+
+    rr_radar_mapping = get_rr_to_radarnumber_map(sessions)
     transplant_run(
         audit_writer, codes, satellite, sessions, ukrdc_radar_mapping, rr_radar_mapping
     )
@@ -126,25 +130,170 @@ def transplant_run(
         ukrdc_radar_mapping: pl.DataFrame,
         rr_radar_mapping: pl.DataFrame,
 ):
+    # =====================<IMPORT TRANSPLANT DATA>==================
     # get transplant data from sessions where radar number
+    # TODO check if cause of failure is needed in radar
     df_collection = sessions_to_transplant_dfs(
         sessions,
         ukrdc_radar_mapping.get_column("number"),
         rr_radar_mapping.get_column("number"),
     )
 
+    # =====================<FORMAT DATA>==================
     df_collection["rr"] = df_collection["rr"].with_columns(
-        RADAR_NO=pl.col("RR_NO").replace(
+        patient_id=pl.col("RR_NO").replace(
             rr_radar_mapping.get_column("number"),
             rr_radar_mapping.get_column("patient_id"),
             default="None",
         )
+    ).drop("RR_NO")
+    # convert transplant unit to radar int code
+    df_collection = convert_transplant_unit(df_collection, sessions)
+    df_collection["rr"] = get_rr_transplant_modality(df_collection["rr"])
+
+    df_collection["rr"] = df_collection["rr"].rename(
+        {
+            "TRANSPLANT_UNIT": "transplant_group_id",
+            "UKT_FAIL_DATE": "date_of_failure",
+            "TRANSPLANT_DATE": "date",
+            "HLA_MISMATCH": "hla_mismatch"
+        }
+    ).drop(["TRANSPLANT_TYPE", "TRANSPLANT_ORGAN", "TRANSPLANT_RELATIONSHIP", "TRANSPLANT_SEX"]).with_columns(
+        pl.lit(200).alias("source_group_id"), pl.lit("RR").alias("source_type"))
+    with pl.Config(tbl_cols=-1):
+        print(df_collection["rr"].filter(pl.col("modality").is_not_null()))
+        print(df_collection["rr"].filter(pl.col("modality").is_null()))
+
+
+    # =====================<GROUP AND REDUCE>==================
+
+    cols = df_collection["rr"].columns
+    df_collection["rr"] = ((df_collection["rr"]
+                            .sort("patient_id", "date"))
+    .with_columns(
+        pl.col(col_name).shift().over("patient_id").alias(f"{col_name}_shifted") for col_name in cols))
+
+    mask = (
+            abs(pl.col("date") - pl.col("date_shifted")) <= pl.duration(days=5)
     )
+    df_collection['rr'] = df_collection["rr"].with_columns(
+        pl.when(mask).then(0).otherwise(1).over("patient_id").alias("group_id"))
+    df_collection['rr'] = df_collection["rr"].with_columns(
+        pl.col("group_id").cumsum().rle_id().over("patient_id").alias("group_id"))
+    df_collection['rr'] = df_collection["rr"].groupby(["patient_id", "group_id"]).agg(**{
+        col: pl.col(col).first()
+        for col in cols
+        if col not in ["patient_id", "group_id"]
+    }).drop("group_id")
+    # transplant group_id == hospital
+
+    print(df_collection["rr"].sort("patient_id"))
     for i in df_collection:
         print(i)
         print(df_collection[i].columns)
 
     pass
+
+
+def get_rr_transplant_modality(rr_df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Get the transplant modality based on specific conditions.
+
+    Args:
+        rr_df: pl.DataFrame - A Polars DataFrame containing transplant data.
+
+    Returns:
+        pl.DataFrame: A Polars DataFrame with an added column 'modality' representing the transplant modality.
+
+    Examples:
+        >>> df = pl.DataFrame({
+        ...     "TRANSPLANT_TYPE": ["Live", "DCD", "Live"],
+        ...     "TRANSPLANT_RELATIONSHIP": ["0", "2", "9"],
+        ...     "TRANSPLANT_SEX": ["1", "2", "1"]
+        ... })
+        >>> result = get_rr_transplant_modality(df)
+    """
+
+    ttype = pl.col("TRANSPLANT_TYPE")
+    alive = ttype.is_in(['Live'])
+    dead = ttype.is_in(['DCD', 'DBD'])
+    trel = pl.col("TRANSPLANT_RELATIONSHIP")
+    tsex = pl.col("TRANSPLANT_SEX")
+    father = '1'
+    mother = '2'
+    # TODO missing 25 to 28
+    rr_df = rr_df.with_columns(
+        # child
+        pl.when(
+            alive & (trel == '0')
+        ).then(77)
+        # sibling
+        .when(
+            alive & (trel.is_in(['3', '4', '5', '6', '7', '8']))
+        ).then(21)
+        # father
+        .when(
+            alive & (trel == '2') & (tsex == father)
+        ).then(74)
+        # mother
+        .when(
+            alive & (trel == '2') & (tsex == mother)
+        ).then(75)
+        # other related
+        .when(
+            alive & (trel == '9')
+        ).then(23)
+        # live unrelated
+        .when(
+            alive & (trel.is_in(['11', '12', '15', '16', '19', '10']))
+        ).then(24)
+        # cadaver donor
+        .when(dead).then(20)
+        # unknown
+        .when(
+            trel.is_in(['88', '99'])
+        ).then(
+            99
+        ).otherwise(None).alias("modality")
+
+    )
+    return rr_df
+
+
+def convert_transplant_unit(df_collection, sessions):
+    """
+    Converts transplant unit codes in a DataFrame using a mapping obtained from a database session.
+
+    Args:
+        df_collection: dict - A dictionary containing DataFrames, where 'rr' DataFrame has 'TRANSPLANT_UNIT' column.
+        sessions: dict - A dictionary of database sessions, with 'radar' key used to query mapping data.
+
+    Returns:
+        dict: A dictionary with updated 'rr' DataFrame containing mapped 'TRANSPLANT_UNIT' values.
+
+    Raises:
+        KeyError: If the 'TRANSPLANT_UNIT' column is missing in the 'rr' DataFrame.
+    """
+
+    query = (
+        sessions["radar"]
+        .session.query(
+            text(
+                """
+                id, code FROM groups
+"""
+            )
+        ).filter(text("type = 'HOSPITAL'"))
+    )
+    kmap = sessions["radar"].get_data_as_df(query)
+    df_collection["rr"] = df_collection["rr"].with_columns(
+        TRANSPLANT_UNIT=pl.col("TRANSPLANT_UNIT").replace(
+            kmap.get_column("code"),
+            kmap.get_column("id"),
+            default=None,
+        )
+    )
+    return df_collection
 
 
 def treatment_run(audit_writer: AuditWriter | StubObject, codes: pl.DataFrame, satellite: pl.DataFrame,

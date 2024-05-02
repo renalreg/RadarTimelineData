@@ -297,9 +297,6 @@ def sessions_to_transplant_dfs(
         .session.query(
             text(
                 """
-                t.id,
-                t.pid,
-                t.idx,
                 t.proceduretypecode,
                 t.proceduretypecodestd,
                 t.proceduretypedesc,
@@ -332,11 +329,29 @@ def sessions_to_transplant_dfs(
     temp = rr_filter.to_list()
     in_clause = ",".join([f"'{str(value)}'" for value in temp])
 
+    # transplant unit -> transplant group id
+    # will need to add hla 000 column to db
+
     rr_query = (
         sessions["rr"]
-        .session.query(text("""* FROM [renalreg].[dbo].[UKT_TRANSPLANTS] """))
+        .session.query(text("""
+    u.[RR_NO],
+    u.[TRANSPLANT_TYPE],
+    u.[TRANSPLANT_ORGAN],
+    u.[TRANSPLANT_DATE],
+    u.[UKT_FAIL_DATE],
+    u.[HLA_MISMATCH],
+    u.[TRANSPLANT_RELATIONSHIP],
+    u.[TRANSPLANT_SEX],
+    x.[RR_CODE] as TRANSPLANT_UNIT
+FROM 
+    [renalreg].[dbo].[UKT_TRANSPLANTS] u
+LEFT JOIN 
+    [renalreg].[dbo].[UKT_SITES] x ON u.[TRANSPLANT_UNIT] = x.[SITE_NAME]"""))
         .filter(text(f"[RR_NO] in ({in_clause})"))
     )
+    """['patient_id', 'source_group_id', 'source_type', 'transplant_group_id', 'date', 'modality', 'date_of_recurrence', 'date_of_failure', 'recurrence']"""
+
     df_collection["rr"] = sessions["rr"].get_data_as_df(rr_query)
     return df_collection
 
