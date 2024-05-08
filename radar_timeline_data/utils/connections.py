@@ -287,45 +287,6 @@ def sessions_to_transplant_dfs(
         .drop(columns="id")
         .rename({"id_str": "id"})
     )
-
-    # TODO clean this up, see if in clause can be improved
-    temp = ukrdc_filter.to_list()
-    in_clause = ",".join([f"'{str(value)}'" for value in temp])
-    # Extract data for "ukrdc" session
-    ukrdc_query = (
-        sessions["ukrdc"]
-        .session.query(
-            text(
-                """
-                t.proceduretypecode,
-                t.proceduretypecodestd,
-                t.proceduretypedesc,
-                t.cliniciancode,
-                t.cliniciancodestd,
-                t.cliniciandesc,
-                t.proceduretime,
-                t.enteredbycode,
-                t.enteredbycodestd,
-                t.enteredbydesc,
-                t.enteredatcode,
-                t.enteredatcodestd,
-                t.enteredatdesc,
-                t.updatedon,
-                t.actioncode,
-                t.externalid,
-                t.creation_date,
-                t.update_date,
-                pr.localpatientid,
-                pr.ukrdcid 
-                FROM transplant as t
-                JOIN patientrecord AS pr
-                ON t.pid = pr.pid"""
-            )
-        )
-        .filter(text(f"pr.localpatientid IN ({in_clause})"))
-    )
-    df_collection["ukrdc"] = sessions["ukrdc"].get_data_as_df(ukrdc_query)
-
     temp = rr_filter.to_list()
     in_clause = ",".join([f"'{str(value)}'" for value in temp])
 
