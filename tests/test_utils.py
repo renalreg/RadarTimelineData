@@ -432,7 +432,6 @@ def test_split_combined_dataframe():
     )
 
 
-@pytest.mark.dependency(depends=["test_creation"])
 def test_group_reduce():
     """checking that combine dataframes produces correct amount of groups with different dataframe sources"""
 

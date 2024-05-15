@@ -1,6 +1,3 @@
-"""
-
-"""
 import argparse
 from datetime import datetime
 
@@ -24,12 +21,15 @@ from radar_timeline_data.utils.polarUtil import (
     fill_null_time,
     split_combined_dataframe,
     group_and_reduce_combined_dataframe,
-    treatment_table_format_conversion, get_rr_transplant_modality, convert_transplant_unit,
+    treatment_table_format_conversion,
+    get_rr_transplant_modality,
+    convert_transplant_unit,
 )
 
 
 # TODO delete this when done
 def audit():
+    """temp function"""
     population = pl.DataFrame(
         {
             "country": ["United Kingdom", "USA", "United States", "france"],
@@ -42,9 +42,7 @@ def audit():
             "population": [82.19, 82.66, 83.12, 83.52],
         }
     )
-    test = ["a"]
-    test = test.extend("b")
-    print(test)
+
     a = StubObject()
     a = AuditWriter(r"""C:\Users\oliver.reeves\Desktop""", "del")
     a.add_info("items changed", "10")
@@ -78,7 +76,7 @@ def main(audit_writer: AuditWriter | StubObject = StubObject()):
 
     # =======================< START >====================
 
-    audit_writer.add_text("starting script")
+    audit_writer.add_text("starting script", style="Heading 4")
     sessions = create_sessions()
 
     # get codes from ukrdc
@@ -90,11 +88,10 @@ def main(audit_writer: AuditWriter | StubObject = StubObject()):
     audit_writer.add_table(
         text="Modality Codes:", table=codes, table_name="Modality_Codes"
     )
-    audit_writer.add_table_snippets(codes)
+
     audit_writer.add_table(
         text="Satellite Units:", table=satellite, table_name="Satellite_Units"
     )
-    audit_writer.add_table_snippets(satellite)
 
     # get healthcare facility mapping
     ukrdc_radar_mapping = get_ukrdcid_to_radarnumber_map(sessions)
@@ -104,16 +101,16 @@ def main(audit_writer: AuditWriter | StubObject = StubObject()):
         table=ukrdc_radar_mapping,
         table_name="Patient_number",
     )
-    audit_writer.add_table_snippets(ukrdc_radar_mapping)
 
     # =======================< TRANSPLANT AND TREATMENT RUNS >====================
+    audit_writer.add_text("Starting Treatment Run", "Heading 4")
+    treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping)
 
-    # treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping)
+    audit_writer.add_text("Starting Transplant Run", "Heading 4")
 
     rr_radar_mapping = get_rr_to_radarnumber_map(sessions)
-    transplant_run(
-        audit_writer, codes, satellite, sessions, ukrdc_radar_mapping, rr_radar_mapping
-    )
+
+    transplant_run(audit_writer, sessions, ukrdc_radar_mapping, rr_radar_mapping)
 
     # send to database
     # close the sessions connection
@@ -122,14 +119,28 @@ def main(audit_writer: AuditWriter | StubObject = StubObject()):
 
 
 def transplant_run(
-        audit_writer: AuditWriter | StubObject,
-        codes: pl.DataFrame,
-        satellite: pl.DataFrame,
-        sessions: dict[str, SessionManager],
-        ukrdc_radar_mapping: pl.DataFrame,
-        rr_radar_mapping: pl.DataFrame,
+    audit_writer: AuditWriter | StubObject,
+    sessions: dict[str, SessionManager],
+    ukrdc_radar_mapping: pl.DataFrame,
+    rr_radar_mapping: pl.DataFrame,
 ):
+    """
+    Run the transplant data processing pipeline.
+
+    Args:
+        audit_writer: AuditWriter or StubObject instance for writing audit logs.
+        sessions: Dictionary of session managers.
+        ukrdc_radar_mapping: DataFrame containing UKRDC radar mapping data.
+        rr_radar_mapping: DataFrame containing RR radar mapping data.
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If source_type or patient_id fails sanity checks.
+    """
     # =====================<IMPORT TRANSPLANT DATA>==================
+
     # get transplant data from sessions where radar number
     # TODO check if cause of failure is needed in radar
     df_collection = sessions_to_transplant_dfs(
@@ -137,115 +148,199 @@ def transplant_run(
         ukrdc_radar_mapping.get_column("number"),
         rr_radar_mapping.get_column("number"),
     )
+    audit_writer.set_ws("import_transplant_run")
+    for i in df_collection:
+        audit_writer.add_table(
+            text=f"import table {i}", table=df_collection[i], table_name=i
+        )
 
     # =====================<FORMAT DATA>==================
-
-    df_collection["rr"] = df_collection["rr"].with_columns(
-        patient_id=pl.col("RR_NO").replace(
-            rr_radar_mapping.get_column("number"),
-            rr_radar_mapping.get_column("patient_id"),
-            default="None",
+    audit_writer.add_text("formatting transplant data")
+    df_collection["rr"] = (
+        df_collection["rr"]
+        .with_columns(
+            patient_id=pl.col("RR_NO").replace(
+                rr_radar_mapping.get_column("number"),
+                rr_radar_mapping.get_column("patient_id"),
+                default="None",
+            )
         )
-    ).drop("RR_NO")
+        .drop("RR_NO")
+    )
+
     # convert transplant unit to radar int code
     df_collection = convert_transplant_unit(df_collection, sessions)
     df_collection["rr"] = get_rr_transplant_modality(df_collection["rr"])
 
-    df_collection["rr"] = df_collection["rr"].rename(
-        {
-            "TRANSPLANT_UNIT": "transplant_group_id",
-            "UKT_FAIL_DATE": "date_of_failure",
-            "TRANSPLANT_DATE": "date",
-            "HLA_MISMATCH": "hla_mismatch"
-        }
-    ).drop(["TRANSPLANT_TYPE", "TRANSPLANT_ORGAN", "TRANSPLANT_RELATIONSHIP", "TRANSPLANT_SEX"]).with_columns(
-        pl.lit(200).alias("source_group_id"), pl.lit("RR").alias("source_type"))
-
-    with pl.Config(tbl_cols=-1):
-        print(df_collection["rr"].filter(pl.col("modality").is_not_null()))
-        print(df_collection["rr"].filter(pl.col("modality").is_null()))
+    df_collection["rr"] = (
+        df_collection["rr"]
+        .rename(
+            {
+                "TRANSPLANT_UNIT": "transplant_group_id",
+                "UKT_FAIL_DATE": "date_of_failure",
+                "TRANSPLANT_DATE": "date",
+                "HLA_MISMATCH": "hla_mismatch",
+            }
+        )
+        .drop(
+            [
+                "TRANSPLANT_TYPE",
+                "TRANSPLANT_ORGAN",
+                "TRANSPLANT_RELATIONSHIP",
+                "TRANSPLANT_SEX",
+            ]
+        )
+        .with_columns(
+            pl.lit(200).alias("source_group_id"), pl.lit("RR").alias("source_type")
+        )
+    )
+    audit_writer.set_ws("transplant_format")
+    audit_writer.add_table("format changes", df_collection["rr"], "format_rr_table")
 
     # =====================<GROUP AND REDUCE>==================
-
+    audit_writer.add_text("Group and Reduce")
+    audit_writer.set_ws("reduced")
     cols = df_collection["rr"].columns
-    df_collection["rr"] = ((df_collection["rr"]
-                            .sort("patient_id", "date"))
-    .with_columns(
-        pl.col(col_name).shift().over("patient_id").alias(f"{col_name}_shifted") for col_name in cols))
-
-    mask = (
-            abs(pl.col("date") - pl.col("date_shifted")) <= pl.duration(days=5)
+    df_collection["rr"] = (df_collection["rr"].sort("patient_id", "date")).with_columns(
+        pl.col(col_name).shift().over("patient_id").alias(f"{col_name}_shifted")
+        for col_name in cols
     )
-    df_collection['rr'] = df_collection["rr"].with_columns(
-        pl.when(mask).then(0).otherwise(1).over("patient_id").alias("group_id"))
-    df_collection['rr'] = df_collection["rr"].with_columns(
-        pl.col("group_id").cumsum().rle_id().over("patient_id").alias("group_id"))
 
-    df_collection['rr'] = df_collection["rr"].groupby(["patient_id", "group_id"]).agg(**{
-        col: pl.col(col).first()
-        for col in cols
-        if col not in ["patient_id", "group_id"]
-    }).drop("group_id").with_columns(pl.lit(None, pl.String).alias("id"))
+    mask = abs(pl.col("date") - pl.col("date_shifted")) <= pl.duration(days=5)
+    df_collection["rr"] = df_collection["rr"].with_columns(
+        pl.when(mask).then(0).otherwise(1).over("patient_id").alias("group_id")
+    )
+    df_collection["rr"] = df_collection["rr"].with_columns(
+        pl.col("group_id").cumsum().rle_id().over("patient_id").alias("group_id")
+    )
+    audit_writer.add_table(
+        "transplants from rr grouped", df_collection["rr"], "grouped_rr"
+    )
+    audit_writer.add_text("reducing rr transplants data ...")
+
+    df_collection["rr"] = (
+        df_collection["rr"]
+        .groupby(["patient_id", "group_id"])
+        .agg(
+            **{
+                col: pl.col(col).first()
+                for col in cols
+                if col not in ["patient_id", "group_id"]
+            }
+        )
+        .drop("group_id")
+        .with_columns(pl.lit(None, pl.String).alias("id"))
+    )
+    audit_writer.add_table(
+        "reduced rr transplants :", df_collection["rr"], "reduced_rr"
+    )
 
     print(df_collection["radar"].sort("patient_id"))
     print(df_collection["rr"].sort("patient_id"))
 
-    # total 19731
-
     # =====================< COMBINE RADAR & RR >==================
-    combine_df = pl.concat([df_collection["radar"], df_collection["rr"]], how="diagonal_relaxed")
+    audit_writer.add_text("merging transplants data")
+    audit_writer.set_ws("transplant_merge")
+    audit_writer.add_table(
+        "rr transplants before merge", df_collection["rr"], "unmerged_rr_transplants"
+    )
+    audit_writer.add_table(
+        "radar transplants before merge",
+        df_collection["radar"],
+        "unmerged_radar_transplants",
+    )
+    combine_df = pl.concat(
+        [df_collection["radar"], df_collection["rr"]], how="diagonal_relaxed"
+    )
+    audit_writer.add_table("transplants after merge", combine_df, "merged_transplants")
 
     # =====================< GROUP AND REDUCE >==================
-
+    audit_writer.add_text("grouping and reducing merged transplants")
     # list of current columns
     cols = combine_df.columns
     # shift columns
-    combine_df = ((combine_df
-                   .sort("patient_id", "date"))
-    .with_columns(
-        pl.col(col_name).shift().over("patient_id").alias(f"{col_name}_shifted") for col_name in cols))
+    combine_df = (combine_df.sort("patient_id", "date")).with_columns(
+        pl.col(col_name).shift().over("patient_id").alias(f"{col_name}_shifted")
+        for col_name in cols
+    )
 
     # date mask to define overlapping transplants
-    mask = (
-            abs(pl.col("date") - pl.col("date_shifted")) <= pl.duration(days=5)
-    )
+    mask = abs(pl.col("date") - pl.col("date_shifted")) <= pl.duration(days=5)
     # group using the mask and perform a 'run length encoding'
     combine_df = combine_df.with_columns(
-        pl.when(mask).then(0).otherwise(1).over("patient_id").alias("group_id"))
+        pl.when(mask).then(0).otherwise(1).over("patient_id").alias("group_id")
+    )
     combine_df = combine_df.with_columns(
-        pl.col("group_id").cumsum().rle_id().over("patient_id").alias("group_id"))
+        pl.col("group_id").cumsum().rle_id().over("patient_id").alias("group_id")
+    )
 
     # convert source types into priority numbers
     combine_df = combine_df.with_columns(
-        pl.col("source_type").replace(
+        pl.col("source_type")
+        .replace(
             old=["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"],
             new=["0", "1", "2", "3", "4"],
             default=None,
-        ).cast(pl.Int32)
+        )
+        .cast(pl.Int32)
     )
     # sort data in regard to source priority
-    combine_df = combine_df.sort("patient_id", "group_id", "source_type", descending=True)
+    combine_df = combine_df.sort(
+        "patient_id", "group_id", "source_type", descending=True
+    )
     # group data and aggregate first non-null id and first of other columns per patient and group
-    combine_df = combine_df.groupby(["patient_id", "group_id"]).agg(pl.col("id").drop_nulls().first(), **{
-        col: pl.col(col).first()
-        for col in cols
-        if col not in ["patient_id", "group_id", "id"]
-    }).drop(columns=["group_id"])
+    combine_df = (
+        combine_df.groupby(["patient_id", "group_id"])
+        .agg(
+            pl.col("id").drop_nulls().first(),
+            **{
+                col: pl.col(col).first()
+                for col in cols
+                if col not in ["patient_id", "group_id", "id"]
+            },
+        )
+        .drop(columns=["group_id"])
+    )
 
     # convert source_type back to correct format
     combine_df = combine_df.with_columns(
-        pl.col("source_type").cast(pl.String).replace(
+        pl.col("source_type")
+        .cast(pl.String)
+        .replace(
             new=["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"],
             old=["0", "1", "2", "3", "4"],
             default=None,
         )
     )
 
+    # =====================< CHECK for Changes  >==================
+
+    audit_writer.add_table("reduced data", combine_df, "reduced_transplant_data")
+    audit_writer.set_ws("transplant_output")
+    audit_writer.add_table(
+        "new transplants",
+        combine_df.filter(pl.col("id").is_null()),
+        "new_transplant_data",
+    )
+    audit_writer.add_table(
+        "updated transplants",
+        combine_df.filter(pl.col("id").is_not_null()),
+        "updated_transplant_data",
+    )
     # =====================< SANITY CHECKS  >==================
-    print(combine_df.filter(~pl.col("source_type").is_in(["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"])).get_column(
-        "source_type").shape)
-    if combine_df.filter(~pl.col("source_type").is_in(["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"])).get_column(
-            "source_type").shape != (0,):
+
+    print(
+        combine_df.filter(
+            ~pl.col("source_type").is_in(
+                ["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"]
+            )
+        )
+        .get_column("source_type")
+        .shape
+    )
+    if combine_df.filter(
+        ~pl.col("source_type").is_in(["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"])
+    ).get_column("source_type").shape != (0,):
         raise ValueError("source_type")
     if not combine_df.filter(pl.col("patient_id").is_null()).is_empty():
         raise ValueError("patient_id")
@@ -257,11 +352,15 @@ def transplant_run(
         print(combine_df.filter(pl.col("id").is_not_null()))
 
     # TODO check that rr ids are in radar by querying
-    pass
 
 
-def treatment_run(audit_writer: AuditWriter | StubObject, codes: pl.DataFrame, satellite: pl.DataFrame,
-                  sessions: dict[str, SessionManager], ukrdc_radar_mapping: pl.DataFrame) -> None:
+def treatment_run(
+    audit_writer: AuditWriter | StubObject,
+    codes: pl.DataFrame,
+    satellite: pl.DataFrame,
+    sessions: dict[str, SessionManager],
+    ukrdc_radar_mapping: pl.DataFrame,
+) -> None:
     """
     function that controls the flow of treatment rows/data
     Args:
@@ -280,10 +379,10 @@ def treatment_run(audit_writer: AuditWriter | StubObject, codes: pl.DataFrame, s
     audit_writer.add_text("importing Treatment data from:")
     audit_writer.set_ws(worksheet_name="import")
     audit_writer.add_table(
-        text="  UKRDC", table=df_collection["ukrdc"], table_name="ukrdc"
+        text="  UKRDC", table=df_collection["ukrdc"], table_name="treatment_ukrdc"
     )
     audit_writer.add_table(
-        text="  RADAR", table=df_collection["radar"], table_name="radar"
+        text="  RADAR", table=df_collection["radar"], table_name="treatment_radar"
     )
     cols = df_collection["ukrdc"].columns
 
@@ -398,11 +497,16 @@ if __name__ == "__main__":
         print(f"Auditing directory: {args.audit}")
         audit = AuditWriter(f"{args.audit}", "delta")
         start_time = datetime.now()
-        audit.add_info("start time", str(start_time))
+        audit.add_info("start time", str(start_time.strftime("%Y-%m-%d %H:%M")))
         main(audit_writer=audit)
         end_time = datetime.now()
-        audit.add_info("end time", str(end_time))
-        audit.add_info("total time", str(end_time - start_time))
+        audit.add_info("end time", str(end_time.strftime("%Y-%m-%d %H:%M")))
+        total_seconds = (end_time - start_time).total_seconds()
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        audit.add_info(
+            "total time", f"{(hours)} hours {(minutes)} mins {int(seconds)} seconds"
+        )
         audit.commit_audit()
 
     else:

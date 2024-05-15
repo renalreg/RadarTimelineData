@@ -1,4 +1,5 @@
 import os
+import random
 from typing import Any, List
 
 from docx import Document
@@ -41,7 +42,14 @@ class AuditWriter:
     - current_worksheet (Worksheet): The current worksheet being written to in the spreadsheet.
     - worksheets (dict): A dictionary of worksheets within the spreadsheet.
     """
-    def __init__(self, directory: str, filename: str):
+
+    def __init__(
+        self,
+        directory: str,
+        filename: str,
+        include_excel: bool = True,
+        include_breakdown: bool = True,
+    ):
         """
         Initializes an AuditWriter object.
 
@@ -52,20 +60,27 @@ class AuditWriter:
         self.directory = directory
         self.filename = filename
         self.document = Document()
+        self.stylesheet = self.__stylesheet()
         self.__style()
-        self.document.add_heading("Audit " + filename, 0)
+
+        self.document.add_heading(f"Audit {filename}", 0)
         self.document.add_paragraph("Proccess", style="Heading 1")
-        self.important_High = 0
-        self.important_Low = 0
-        self.info = {}
 
-        self.wb = xlsxwriter.Workbook(
-            os.path.join(self.directory, self.filename + ".xlsx")
-        )
-        self.current_worksheet = None
-        self.worksheets = {}
+        # for top breakdown
+        self.__include_breakdown = include_breakdown
+        if include_breakdown:
+            self.important_High = 0
+            self.important_Low = 0
+            self.info = {}
 
-
+        # for excel
+        self.__include_excel = include_excel
+        if include_excel:
+            self.wb = xlsxwriter.Workbook(
+                os.path.join(self.directory, f"{self.filename}.xlsx")
+            )
+            self.current_worksheet = None
+            self.worksheets = {}
 
     def add_change(self, description: str, old: Any, new: Any):
         """
@@ -120,7 +135,11 @@ class AuditWriter:
         hyperlink.append(new_run)
         r = paragraph.add_run()
         r._r.append(hyperlink)
-        r.font.color.theme_color = MSO_THEME_COLOR_INDEX.HYPERLINK
+        link = self.stylesheet.get("Link")
+        color = link.get("color") if link is not None else None
+        r.font.color.rgb = (
+            self.stylesheet.get("Link").get("color") if color else RGBColor(255, 0, 0)
+        )
         r.font.underline = True
         return hyperlink
 
@@ -158,29 +177,33 @@ class AuditWriter:
         - table (pl.DataFrame): The DataFrame to be added as a table.
         - table_name (str): The name of the table must not contain spaces.
         """
-        table_name = table_name.strip()
-        para = self.document.add_paragraph(text + " ")
-        para.style = "List Bullet"
-        self.add_hyperlink(
-            para,
-            self.directory
-            + "/"
-            + self.filename
-            + ".xlsx"
-            + r"#"
-            + self.current_worksheet
-            + r"!"
-            + (get_column_letter(self.worksheets[self.current_worksheet] + 1))
-            + "1",
-            table_name,
-        )
-        table.write_excel(
-            workbook=self.wb,
-            worksheet=self.current_worksheet,
-            table_name=table_name,
-            position=(0, self.worksheets[self.current_worksheet]),
-        )
-        self.worksheets[self.current_worksheet] += len(table.columns) + 1
+        if self.__include_excel:
+            para = self.document.add_paragraph(f"{text} ")
+            para.paragraph_format.left_indent = Inches(0.25)
+            table_name = table_name.strip()
+            self.add_hyperlink(
+                para,
+                f"{self.directory}/{self.filename}.xlsx#{self.current_worksheet}!{get_column_letter(self.worksheets[self.current_worksheet] + 1)}1",
+                table_name,
+            )
+            # Define a list of available table styles
+            available_styles = [
+                "Table Style Medium 2",
+                "Table Style Medium 3",
+                "Table Style Medium 4",
+            ]
+
+            # Select a random style
+            random_style = random.choice(available_styles)
+            table.write_excel(
+                workbook=self.wb,
+                worksheet=self.current_worksheet,
+                table_name=table_name,
+                table_style=random_style,
+                position=(0, self.worksheets[self.current_worksheet]),
+                include_header=True,
+            )
+            self.worksheets[self.current_worksheet] += len(table.columns) + 1
 
     def add_table_snippets(self, table: pl.DataFrame):
         """
@@ -201,7 +224,7 @@ class AuditWriter:
         for index, (name, data_type) in enumerate(zip(cols, table.dtypes)):
             hdr_cells[index].text = name + "\n" + str(data_type)
 
-    def add_text(self, text: str, bulletpoint: bool = False):
+    def add_text(self, text: str, style: str = None):
         """
         Adds text to the audit document.
 
@@ -210,50 +233,73 @@ class AuditWriter:
         """
 
         para = self.document.add_paragraph(text)
-        self.__set_paragraph_spacing(para, 0, 0)
+        # self.__set_paragraph_spacing(para, 0, 0)
+        if style:
+            para.style = style
 
-        if bulletpoint:
-            para.style = "List Bullet 2"
+        para.paragraph_format.left_indent = Inches(0.25)
+        # para.paragraph_format.right_indent = Inches(0.25)
 
-        else:
-            para.style = "List Bullet"
+    def __stylesheet(self):
+        body_font = "Cascadia Code"
+        body_color = RGBColor(0, 0, 0)
+        heading_color = RGBColor(0, 0, 0)
+        link_color = RGBColor(255, 0, 255)
+        style_config = {
+            "Normal": {"font": body_font, "color": body_color},
+            "Title": {"font": body_font, "color": body_color},
+            "Link": {
+                "color": link_color,
+            },
+        }
 
-            # para.paragraph_format.left_indent = Inches(0.25)
-            # para.paragraph_format.right_indent = Inches(0.25)
+        # Generate headings from 1 to 9
+        for i in range(1, 10):
+            heading_key = f"Heading {i}"
+            style_config[heading_key] = {"font": body_font, "color": heading_color}
+
+        return style_config
 
     def __style(self):
+        # access documents styles
         styles = self.document.styles
-        paragraph_styles = [s for s in styles if s.type == WD_STYLE_TYPE.PARAGRAPH]
-        for style in paragraph_styles:
-            style.font.name = "Cascadia Code"
-        for i in range(1, 9):
-            h = styles["Heading %d" % i]
-            rFonts = h.element.rPr.rFonts
-            rFonts.set(qn("w:asciiTheme"), "Cascadia Code")
-        h = styles["Title"]
-        rFonts = h.element.rPr.rFonts
-        rFonts.set(qn("w:asciiTheme"), "Cascadia Code")
+        css = self.stylesheet
+
+        for element in css:
+            if element in styles:
+                style = styles[element]
+                font = css[element].get("font")
+                color = css[element].get("color")
+                if font:
+                    if element == "Title" or "Heading" in element:
+                        style.element.rPr.rFonts.set(qn("w:asciiTheme"), font)
+                    else:
+                        style.font.name = font
+                if color:
+                    style.font.color.rgb = color
 
     def add_top_breakdown(self):
         """
         Adds a breakdown of important information at the top of the audit document.
         """
+        if not self.__include_breakdown:
+            return
         paragraph = self.document.paragraphs[1].insert_paragraph_before()
         run = paragraph.add_run("\u26A0")
         self.__format_run(run, Pt(16), (255, 204, 0))
-        paragraph.add_run(" " + str(self.important_Low) + " Warnings raised ")
+        paragraph.add_run(f" {str(self.important_Low)} Warnings raised ")
         self.__set_paragraph_spacing(paragraph, 0, 0)
 
         paragraph = paragraph.insert_paragraph_before()
         self.__set_paragraph_spacing(paragraph, 0, 0)
         run = paragraph.add_run("\u26A0")
         self.__format_run(run, Pt(16), (204, 51, 0))
-        paragraph.add_run(" " + str(self.important_High) + " Issues raised ")
+        paragraph.add_run(f" {str(self.important_High)} Issues raised ")
         self.__set_paragraph_spacing(paragraph, 0, 0)
 
         for info in reversed(self.info):
             paragraph = paragraph.insert_paragraph_before()
-            paragraph.add_run(info + " : " + self.info[info])
+            paragraph.add_run(f"{info} : {self.info[info]}")
             self.__set_paragraph_spacing(paragraph, 0, 0)
 
         paragraph.insert_paragraph_before("breakdown", style="Heading 1")
@@ -282,7 +328,7 @@ class AuditWriter:
         """
         self.add_top_breakdown()
         self.wb.close()
-        self.document.save(os.path.join(self.directory, self.filename + ".docx"))
+        self.document.save(os.path.join(self.directory, f"{self.filename}.docx"))
 
     def set_ws(self, worksheet_name: str):
         """
@@ -291,12 +337,9 @@ class AuditWriter:
         Parameters:
         - worksheet_name (str): The name of the worksheet.
         """
-        if worksheet_name in self.worksheets:
-            self.current_worksheet = worksheet_name
-
-        else:
+        if worksheet_name not in self.worksheets:
             self.worksheets[worksheet_name] = 0
-            self.current_worksheet = worksheet_name
+        self.current_worksheet = worksheet_name
 
 
 class StubObject:

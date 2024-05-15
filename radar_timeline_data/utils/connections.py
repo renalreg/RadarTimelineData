@@ -7,31 +7,31 @@ from sqlalchemy.orm import Session, Query
 
 class SessionManager:
     """
-      A class to manage database sessions and queries, supporting both SQL Server and PostgreSQL connections.
-      It also allows for connecting to databases through an rr connection manager.
-      Offers functionality to retrieve data from the database as a Polars DataFrame or as a query object.
+    A class to manage database sessions and queries, supporting both SQL Server and PostgreSQL connections.
+    It also allows for connecting to databases through an rr connection manager.
+    Offers functionality to retrieve data from the database as a Polars DataFrame or as a query object.
 
-      Attributes:
-      - db_uri (str | None): The database URI for creating a new engine. Default is None.
-      - driver (str | None): The driver to use for the database connection. Default is None.
-      - connection_manager_passthrough (str | None): A string indicating the connection manager to use. Default is None.
-      - session: The SQLAlchemy session object for interacting with the database.
-      - engine: The SQLAlchemy engine object for database connection management.
+    Attributes:
+    - db_uri (str | None): The database URI for creating a new engine. Default is None.
+    - driver (str | None): The driver to use for the database connection. Default is None.
+    - connection_manager_passthrough (str | None): A string indicating the connection manager to use. Default is None.
+    - session: The SQLAlchemy session object for interacting with the database.
+    - engine: The SQLAlchemy engine object for database connection management.
 
-      Methods:
-      - __init__(self, db_uri: str | None = None, driver: str | None = None, connection_manager_passthrough: str | None = None):
-          Initializes the SessionManager with the provided database URI, driver, and connection manager.
-      - get_data_as_df(self, query) -> pl.DataFrame:
-          Retrieves data from the database using the provided query and returns it as a Polars DataFrame.
-      - get_data_as_result(self, query):
-          Retrieves data from the database using the provided query and returns it as a result object.
-      """
+    Methods:
+    - __init__(self, db_uri: str | None = None, driver: str | None = None, connection_manager_passthrough: str | None = None):
+        Initializes the SessionManager with the provided database URI, driver, and connection manager.
+    - get_data_as_df(self, query) -> pl.DataFrame:
+        Retrieves data from the database using the provided query and returns it as a Polars DataFrame.
+    - get_data_as_result(self, query):
+        Retrieves data from the database using the provided query and returns it as a result object.
+    """
 
     def __init__(
-            self,
-            db_uri: str | None = None,
-            driver: str | None = None,
-            connection_manger_passthrough: str | None = None,
+        self,
+        db_uri: str | None = None,
+        driver: str | None = None,
+        connection_manger_passthrough: str | None = None,
     ):
         if connection_manger_passthrough:
             if connection_manger_passthrough == "rr_live":
@@ -75,7 +75,6 @@ class SessionManager:
                 "date_of_recurrence": pl.Date,
                 "CHI_NO": pl.String,
                 "HSC_NO": pl.String,
-                str: pl.String,
             },
         )
 
@@ -95,8 +94,10 @@ def create_sessions() -> dict[str, SessionManager]:
             connection_manger_passthrough="ukrdc_staging",
         ),
         "radar": SessionManager(connection_manger_passthrough="radar_staging"),
-        "rr": SessionManager(db_uri="mssql+pyodbc://rr-sql-live/renalreg",
-                             driver="SQL+Server+Native+Client+11.0", ),
+        "rr": SessionManager(
+            db_uri="mssql+pyodbc://rr-sql-live/renalreg",
+            driver="SQL+Server+Native+Client+11.0",
+        ),
     }
     return sessions
 
@@ -130,7 +131,7 @@ def get_ukrdcid_to_radarnumber_map(sessions: dict[str, SessionManager]) -> pl.Da
     ).unique(subset=["pid"], keep="first")
 
 
-def filter_and_convert(df: pl.dataframe, number_group_id: int) -> str:
+def filter_and_convert(df: pl.DataFrame, number_group_id: int) -> str:
     """
     converts df with number_group_id and number column to str of integers.
     Args:
@@ -203,7 +204,7 @@ def get_rr_to_radarnumber_map(sessions: dict[str, SessionManager]) -> pl.DataFra
 
 
 def sessions_to_treatment_dfs(
-        sessions: dict, filter: pl.Series
+    sessions: dict, filter: pl.Series
 ) -> dict[str, pl.DataFrame]:
     """
     Convert sessions data into DataFrame collection holding treatments.
@@ -260,7 +261,7 @@ def sessions_to_treatment_dfs(
 
 
 def sessions_to_transplant_dfs(
-        sessions: dict, ukrdc_filter: pl.Series, rr_filter: pl.Series
+    sessions: dict, ukrdc_filter: pl.Series, rr_filter: pl.Series
 ) -> dict[str, pl.DataFrame]:
     """
     Convert sessions data into DataFrame collection holding transplants.
@@ -295,7 +296,9 @@ def sessions_to_transplant_dfs(
 
     rr_query = (
         sessions["rr"]
-        .session.query(text("""
+        .session.query(
+            text(
+                """
     u.[RR_NO],
     u.[TRANSPLANT_TYPE],
     u.[TRANSPLANT_ORGAN],
@@ -308,7 +311,9 @@ def sessions_to_transplant_dfs(
 FROM 
     [renalreg].[dbo].[UKT_TRANSPLANTS] u
 LEFT JOIN 
-    [renalreg].[dbo].[UKT_SITES] x ON u.[TRANSPLANT_UNIT] = x.[SITE_NAME]"""))
+    [renalreg].[dbo].[UKT_SITES] x ON u.[TRANSPLANT_UNIT] = x.[SITE_NAME]"""
+            )
+        )
         .filter(text(f"[RR_NO] in ({in_clause})"))
     )
     """['patient_id', 'source_group_id', 'source_type', 'transplant_group_id', 'date', 'modality', 'date_of_recurrence', 'date_of_failure', 'recurrence']"""
@@ -327,13 +332,13 @@ def get_modality_codes(sessions: dict[str, SessionManager]) -> pl.DataFrame:
 
 def get_sattelite_map(session: SessionManager) -> pl.DataFrame:
     """
-        Retrieves satellite mapping data from the database using the provided SessionManager object.
-        The data includes satellite codes and their corresponding main unit codes.
-        Args:
-        - session (SessionManager): The SessionManager object used to interact with the database.
+    Retrieves satellite mapping data from the database using the provided SessionManager object.
+    The data includes satellite codes and their corresponding main unit codes.
+    Args:
+    - session (SessionManager): The SessionManager object used to interact with the database.
 
-        Returns:
-        - pl.DataFrame: A Polars DataFrame containing unique satellite codes and their corresponding main unit codes.
+    Returns:
+    - pl.DataFrame: A Polars DataFrame containing unique satellite codes and their corresponding main unit codes.
     """
     query = session.session.query(
         text(""" satellite_code, main_unit_code FROM satellite_map""")
