@@ -1,3 +1,10 @@
+"""
+TimeLineData importer script.
+
+This script handles the import and processing of timeline data, including treatment and transplant data.
+
+"""
+
 import argparse
 from datetime import datetime
 
@@ -79,22 +86,17 @@ def main(audit_writer: AuditWriter | StubObject = StubObject()):
     audit_writer.add_text("starting script", style="Heading 4")
     sessions = create_sessions()
 
-    # get codes from ukrdc
-    codes = get_modality_codes(sessions)
-    satellite = get_sattelite_map(sessions["ukrdc"])
+    # get codes from ukrdc, get healthcare facility mapping
+    codes, satellite, ukrdc_radar_mapping = codes_and_satellites(sessions)
 
     # write tables to audit
     audit_writer.set_ws(worksheet_name="mappings")
     audit_writer.add_table(
         text="Modality Codes:", table=codes, table_name="Modality_Codes"
     )
-
     audit_writer.add_table(
         text="Satellite Units:", table=satellite, table_name="Satellite_Units"
     )
-
-    # get healthcare facility mapping
-    ukrdc_radar_mapping = get_ukrdcid_to_radarnumber_map(sessions)
 
     audit_writer.add_table(
         text="Patient number mapping:",
@@ -116,6 +118,22 @@ def main(audit_writer: AuditWriter | StubObject = StubObject()):
     # close the sessions connection
     for session in sessions.values():
         session.session.close()
+
+
+def codes_and_satellites(sessions: dict[str, SessionManager]):
+    """
+    Get modality codes and satellite, ukrdc to radar map from sessions.
+
+    Args:
+        sessions: Dictionary of session managers.
+
+    Returns:
+        Tuple containing modality codes and satellite map.
+    """
+    codes = get_modality_codes(sessions)
+    satellite = get_sattelite_map(sessions["ukrdc"])
+    ukrdc_radar_mapping = get_ukrdcid_to_radarnumber_map(sessions)
+    return codes, satellite, ukrdc_radar_mapping
 
 
 def transplant_run(
@@ -149,9 +167,11 @@ def transplant_run(
         rr_radar_mapping.get_column("number"),
     )
     audit_writer.set_ws("import_transplant_run")
-    for i in df_collection:
+    for key, value in df_collection.items():
         audit_writer.add_table(
-            text=f"import table {i}", table=df_collection[i], table_name=i
+            text=f"import table {key}",
+            table=value,
+            table_name=f"raw_transplant_{key}",
         )
 
     # =====================<FORMAT DATA>==================
@@ -234,9 +254,6 @@ def transplant_run(
     audit_writer.add_table(
         "reduced rr transplants :", df_collection["rr"], "reduced_rr"
     )
-
-    print(df_collection["radar"].sort("patient_id"))
-    print(df_collection["rr"].sort("patient_id"))
 
     # =====================< COMBINE RADAR & RR >==================
     audit_writer.add_text("merging transplants data")
@@ -495,12 +512,15 @@ if __name__ == "__main__":
     # Use the arguments
     if args.audit:
         print(f"Auditing directory: {args.audit}")
-        audit = AuditWriter(f"{args.audit}", "delta")
+        audit = AuditWriter(
+            f"{args.audit}", "delta", include_excel=True, include_breakdown=True
+        )
+
         start_time = datetime.now()
-        audit.add_info("start time", str(start_time.strftime("%Y-%m-%d %H:%M")))
+        audit.add_info("start time", start_time.strftime("%Y-%m-%d %H:%M"))
         main(audit_writer=audit)
         end_time = datetime.now()
-        audit.add_info("end time", str(end_time.strftime("%Y-%m-%d %H:%M")))
+        audit.add_info("end time", end_time.strftime("%Y-%m-%d %H:%M"))
         total_seconds = (end_time - start_time).total_seconds()
         hours, remainder = divmod(total_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)

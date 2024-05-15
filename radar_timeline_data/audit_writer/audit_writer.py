@@ -1,23 +1,19 @@
 import os
 import random
-from typing import Any, List
+from typing import Any
 
+import docx
+import polars as pl
+import xlsxwriter
 from docx import Document
-from docx.enum.dml import MSO_THEME_COLOR_INDEX
-from docx.enum.style import WD_STYLE_TYPE
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import (
     WD_COLOR_INDEX,
     WD_ALIGN_PARAGRAPH,
-    WD_TAB_ALIGNMENT,
-    WD_TAB_LEADER,
 )
 from docx.oxml import parse_xml
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor, Inches
-import docx
-import polars as pl
-import xlsxwriter
 from docx.text.paragraph import Paragraph
 from docx.text.run import Run
 from openpyxl.utils import get_column_letter
@@ -166,6 +162,17 @@ class AuditWriter:
             self.important_Low += 1
 
     def add_info(self, key: str, value: str):
+        """
+        Adds information to the audit writer.
+
+        Args:
+            key (str): The key of the information to add.
+            value (str): The value of the information to add.
+
+        Returns:
+            None
+        """
+
         self.info[key] = value
 
     def add_table(self, text: str, table: pl.DataFrame, table_name: str):
@@ -224,7 +231,7 @@ class AuditWriter:
         for index, (name, data_type) in enumerate(zip(cols, table.dtypes)):
             hdr_cells[index].text = name + "\n" + str(data_type)
 
-    def add_text(self, text: str, style: str = None):
+    def add_text(self, text: str, style: str | None = None):
         """
         Adds text to the audit document.
 
@@ -334,8 +341,8 @@ class AuditWriter:
         """
         sets a worksheet to the audit file. can be used to change worksheets
 
-        Parameters:
-        - worksheet_name (str): The name of the worksheet.
+        Args:
+            worksheet_name (str): The name of the worksheet.
         """
         if worksheet_name not in self.worksheets:
             self.worksheets[worksheet_name] = 0
