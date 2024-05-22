@@ -1,7 +1,8 @@
 import polars as pl
+import radar_models.radar2
 from rr_connection_manager import SQLServerConnection
 from rr_connection_manager.classes.postgres_connection import PostgresConnection
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, update, Table, MetaData
 from sqlalchemy.orm import Session, Query
 
 
@@ -351,3 +352,27 @@ def get_source_group_id_mapping(session: SessionManager) -> pl.DataFrame:
         text(""" id, code FROM public.groups ORDER BY id ASC """)
     )
     return session.get_data_as_df(query)
+
+
+def manual_export_sql(session: SessionManager, data: pl.DataFrame, tablename: str):
+    session = session.session
+    data = data.to_dicts()
+    print(data)
+    # Reflect the table from the database
+    table = Table(tablename, MetaData(), autoload_with=session.bind)
+    print(table)
+    session.execute(update(table), data)
+
+
+def export_to_sql(
+    session: SessionManager, data: pl.DataFrame, tablename: str, contains_pk: bool
+) -> None:
+    if contains_pk:
+        manual_export_sql(session, data, tablename)
+    else:
+        data.write_database(
+            table_name=tablename,
+            connection=session.bind.url,
+            if_table_exists="append",
+            engine="sqlalchemy",
+        )

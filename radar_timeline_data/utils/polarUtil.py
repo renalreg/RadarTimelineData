@@ -383,7 +383,7 @@ def overlapping_dates_bool_mask(days: int = 5):
     return mask
 
 
-def treatment_table_format_conversion(
+def format_treatment(
     codes: pl.DataFrame,
     df_collection: dict[str, pl.DataFrame],
     satellite: pl.DataFrame,

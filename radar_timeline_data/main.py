@@ -21,6 +21,7 @@ from radar_timeline_data.utils.connections import (
     SessionManager,
     sessions_to_transplant_dfs,
     get_rr_to_radarnumber_map,
+    export_to_sql,
 )
 from radar_timeline_data.utils.polarUtil import (
     group_and_reduce_ukrdc_dataframe,
@@ -28,7 +29,7 @@ from radar_timeline_data.utils.polarUtil import (
     fill_null_time,
     split_combined_dataframe,
     group_and_reduce_combined_dataframe,
-    treatment_table_format_conversion,
+    format_treatment,
     get_rr_transplant_modality,
     convert_transplant_unit,
 )
@@ -105,10 +106,11 @@ def main(audit_writer: AuditWriter | StubObject = StubObject()):
     )
 
     # =======================< TRANSPLANT AND TREATMENT RUNS >====================
-    audit_writer.add_text("Starting Treatment Run", "Heading 4")
+    audit_writer.add_text("Starting Treatment Run", "Heading 3")
     treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping)
 
-    audit_writer.add_text("Starting Transplant Run", "Heading 4")
+    audit_writer.add_text("Starting Transplant Run", "Heading 3")
+    return None
 
     rr_radar_mapping = get_rr_to_radarnumber_map(sessions)
 
@@ -176,44 +178,9 @@ def transplant_run(
 
     # =====================<FORMAT DATA>==================
     audit_writer.add_text("formatting transplant data")
-    df_collection["rr"] = (
-        df_collection["rr"]
-        .with_columns(
-            patient_id=pl.col("RR_NO").replace(
-                rr_radar_mapping.get_column("number"),
-                rr_radar_mapping.get_column("patient_id"),
-                default="None",
-            )
-        )
-        .drop("RR_NO")
-    )
 
-    # convert transplant unit to radar int code
-    df_collection = convert_transplant_unit(df_collection, sessions)
-    df_collection["rr"] = get_rr_transplant_modality(df_collection["rr"])
+    df_collection = format_transplant(df_collection, rr_radar_mapping, sessions)
 
-    df_collection["rr"] = (
-        df_collection["rr"]
-        .rename(
-            {
-                "TRANSPLANT_UNIT": "transplant_group_id",
-                "UKT_FAIL_DATE": "date_of_failure",
-                "TRANSPLANT_DATE": "date",
-                "HLA_MISMATCH": "hla_mismatch",
-            }
-        )
-        .drop(
-            [
-                "TRANSPLANT_TYPE",
-                "TRANSPLANT_ORGAN",
-                "TRANSPLANT_RELATIONSHIP",
-                "TRANSPLANT_SEX",
-            ]
-        )
-        .with_columns(
-            pl.lit(200).alias("source_group_id"), pl.lit("RR").alias("source_type")
-        )
-    )
     audit_writer.set_ws("transplant_format")
     audit_writer.add_table("format changes", df_collection["rr"], "format_rr_table")
 
@@ -332,6 +299,10 @@ def transplant_run(
 
     # =====================< CHECK for Changes  >==================
 
+    new_transplant_rows = combine_df.filter(pl.col("id").is_null())
+
+    updated_transplant_rows = combine_df.filter(pl.col("id").is_not_null())
+
     audit_writer.add_table("reduced data", combine_df, "reduced_transplant_data")
     audit_writer.set_ws("transplant_output")
     audit_writer.add_table(
@@ -364,11 +335,47 @@ def transplant_run(
 
     # =====================< WRITE TO DATABASE >==================
 
-    with pl.Config(tbl_cols=-1):
-        print(combine_df.filter(pl.col("id").is_null()))
-        print(combine_df.filter(pl.col("id").is_not_null()))
-
     # TODO check that rr ids are in radar by querying
+
+
+def format_transplant(df_collection, rr_radar_mapping, sessions):
+    df_collection["rr"] = (
+        df_collection["rr"]
+        .with_columns(
+            patient_id=pl.col("RR_NO").replace(
+                rr_radar_mapping.get_column("number"),
+                rr_radar_mapping.get_column("patient_id"),
+                default="None",
+            )
+        )
+        .drop("RR_NO")
+    )
+    # convert transplant unit to radar int code
+    df_collection = convert_transplant_unit(df_collection, sessions)
+    df_collection["rr"] = get_rr_transplant_modality(df_collection["rr"])
+    df_collection["rr"] = (
+        df_collection["rr"]
+        .rename(
+            {
+                "TRANSPLANT_UNIT": "transplant_group_id",
+                "UKT_FAIL_DATE": "date_of_failure",
+                "TRANSPLANT_DATE": "date",
+                "HLA_MISMATCH": "hla_mismatch",
+            }
+        )
+        .drop(
+            [
+                "TRANSPLANT_TYPE",
+                "TRANSPLANT_ORGAN",
+                "TRANSPLANT_RELATIONSHIP",
+                "TRANSPLANT_SEX",
+            ]
+        )
+        .with_columns(
+            pl.lit(200).alias("source_group_id"), pl.lit("RR").alias("source_type")
+        )
+    )
+    return df_collection
 
 
 def treatment_run(
@@ -407,7 +414,7 @@ def treatment_run(
 
     # =====================< Formatting >==================
 
-    df_collection = treatment_table_format_conversion(
+    df_collection = format_treatment(
         codes, df_collection, satellite, source_group_id_mapping, ukrdc_radar_mapping
     )
 
@@ -490,6 +497,23 @@ def treatment_run(
     with pl.Config(tbl_cols=-1):
         print(new_treatments)
         print(existing_treatments)
+    new_treatments = new_treatments.slice(0, 1)
+    new_treatments = new_treatments.drop(
+        ["source_type", "id", "created_user_id", "modified_user_id", "recent_date"]
+    ).with_columns(
+        pl.lit("b91d66f2-cd53-42ec-82f8-8d52de5b5bbc").alias("id"),
+        pl.lit("REP").alias("source_type"),
+        pl.lit(100).alias("created_user_id"),
+        pl.lit(100).alias("modified_user_id"),
+    )
+    print(new_treatments)
+    return None
+    export_to_sql(
+        session=sessions["radar"],
+        data=new_treatments,
+        tablename="dialysis",
+        contains_pk=True,
+    )
 
 
 if __name__ == "__main__":
