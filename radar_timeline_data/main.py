@@ -35,6 +35,8 @@ from radar_timeline_data.utils.polarUtil import (
     convert_transplant_unit,
 )
 
+from radar_timeline_data.utils.args import get_args
+
 
 # TODO delete this when done
 def audit():
@@ -513,22 +515,9 @@ def treatment_run(
 
 
 if __name__ == "__main__":
-    logger.info("script start")
 
-    # Parsing command line arguments
-    parser = argparse.ArgumentParser(description="TimelineData importer script")
-    parser.add_argument("-a", "--audit", type=str, help="Audit a directory")
-    parser.add_argument(
-        "-c", "--commit", help="Commit to server", action="store_true", default=False
-    )
-    parser.add_argument(
-        "-tr",
-        "--test_run",
-        help="Run on staging servers",
-        action="store_true",
-        default=False,
-    )
-    args = parser.parse_args()
+    logger.info("script start")
+    args = get_args()
 
     # Setting up parameters
     params = {}
