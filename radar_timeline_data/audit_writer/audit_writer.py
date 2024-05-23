@@ -190,7 +190,7 @@ class AuditWriter:
             table_name = table_name.strip()
             self.add_hyperlink(
                 para,
-                f"{self.directory}/{self.filename}.xlsx#{self.current_worksheet}!{get_column_letter(self.worksheets[self.current_worksheet] + 1)}1",
+                f"{self.filename}.xlsx#{self.current_worksheet}!{get_column_letter(self.worksheets[self.current_worksheet] + 1)}1",
                 table_name,
             )
             # Define a list of available table styles
