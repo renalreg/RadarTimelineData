@@ -1,5 +1,4 @@
 import polars as pl
-import radar_models.radar2
 from rr_connection_manager import SQLServerConnection
 from rr_connection_manager.classes.postgres_connection import PostgresConnection
 from sqlalchemy import create_engine, text, update, Table, MetaData
@@ -357,10 +356,8 @@ def get_source_group_id_mapping(session: SessionManager) -> pl.DataFrame:
 def manual_export_sql(session: SessionManager, data: pl.DataFrame, tablename: str):
     session = session.session
     data = data.to_dicts()
-    print(data)
     # Reflect the table from the database
     table = Table(tablename, MetaData(), autoload_with=session.bind)
-    print(table)
     session.execute(update(table), data)
 
 
