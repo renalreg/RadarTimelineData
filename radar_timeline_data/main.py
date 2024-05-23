@@ -5,13 +5,13 @@ This script handles the import and processing of timeline data, including treatm
 
 """
 
-import argparse
 from datetime import datetime
 
 import polars as pl
 from loguru import logger
 
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
+from radar_timeline_data.utils.args import get_args
 from radar_timeline_data.utils.connections import (
     get_ukrdcid_to_radarnumber_map,
     sessions_to_treatment_dfs,
@@ -34,45 +34,6 @@ from radar_timeline_data.utils.polarUtil import (
     get_rr_transplant_modality,
     convert_transplant_unit,
 )
-
-from radar_timeline_data.utils.args import get_args
-
-
-# TODO delete this when done
-def audit():
-    """temp function"""
-    population = pl.DataFrame(
-        {
-            "country": ["United Kingdom", "USA", "United States", "france"],
-            "date": [
-                datetime(2016, 5, 12),
-                datetime(2017, 5, 12),
-                datetime(2018, 5, 12),
-                datetime(2019, 5, 12),
-            ],  # note record date: May 12th (sorted!)
-            "population": [82.19, 82.66, 83.12, 83.52],
-        }
-    )
-
-    a = StubObject()
-    a = AuditWriter(r"""C:\Users\oliver.reeves\Desktop""", "del")
-    a.add_info("items changed", "10")
-    a.add_info("items removed", "10")
-    a.add_text("starting")
-    a.add_text("processing 100 items", True)
-    a.set_ws(worksheet_name="start")
-
-    a.add_table_snippets(population)
-
-    a.add_table(text="import table", table=population, table_name="starting_table")
-    a.set_ws(worksheet_name="end")
-    a.add_table(text="testing ", table=population, table_name="temp2")
-    a.add_table(text="testing 2", table=population, table_name="temp3")
-    a.add_change("column change", ["a", "b"], ["c"])
-    a.add_change("table change", population, population)
-    a.add_important(" etes", True)
-    a.add_important(" etes", False)
-    a.commit_audit()
 
 
 def main(
@@ -118,7 +79,7 @@ def main(
 
     # =======================< TRANSPLANT AND TREATMENT RUNS >====================
     audit_writer.add_text("Starting Treatment Run", "Heading 3")
-    treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping)
+    treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping, commit)
 
     audit_writer.add_text("Starting Transplant Run", "Heading 3")
 
@@ -153,6 +114,7 @@ def transplant_run(
     sessions: dict[str, SessionManager],
     ukrdc_radar_mapping: pl.DataFrame,
     rr_radar_mapping: pl.DataFrame,
+    commit: bool = False,
 ):
     """
     Run the transplant data processing pipeline.
@@ -172,12 +134,17 @@ def transplant_run(
     # =====================<IMPORT TRANSPLANT DATA>==================
 
     # get transplant data from sessions where radar number
-    # TODO check if cause of failure is needed in radar
+
     df_collection = sessions_to_transplant_dfs(
         sessions,
         ukrdc_radar_mapping.get_column("number"),
         rr_radar_mapping.get_column("number"),
     )
+
+    if df_collection["rr"].is_empty():
+        audit_writer.add_text("ukrr no transplants to import")
+        return None
+
     audit_writer.set_ws("import_transplant_run")
     for key, value in df_collection.items():
         audit_writer.add_table(
@@ -197,42 +164,11 @@ def transplant_run(
     # =====================<GROUP AND REDUCE>==================
     audit_writer.add_text("Group and Reduce")
     audit_writer.set_ws("reduced")
-    cols = df_collection["rr"].columns
-    df_collection["rr"] = (df_collection["rr"].sort("patient_id", "date")).with_columns(
-        pl.col(col_name).shift().over("patient_id").alias(f"{col_name}_shifted")
-        for col_name in cols
-    )
 
-    mask = abs(pl.col("date") - pl.col("date_shifted")) <= pl.duration(days=5)
-    df_collection["rr"] = df_collection["rr"].with_columns(
-        pl.when(mask).then(0).otherwise(1).over("patient_id").alias("group_id")
-    )
-    df_collection["rr"] = df_collection["rr"].with_columns(
-        pl.col("group_id").cumsum().rle_id().over("patient_id").alias("group_id")
-    )
-    audit_writer.add_table(
-        "transplants from rr grouped", df_collection["rr"], "grouped_rr"
-    )
-    audit_writer.add_text("reducing rr transplants data ...")
-
-    df_collection["rr"] = (
-        df_collection["rr"]
-        .groupby(["patient_id", "group_id"])
-        .agg(
-            **{
-                col: pl.col(col).first()
-                for col in cols
-                if col not in ["patient_id", "group_id"]
-            }
-        )
-        .drop("group_id")
-        .with_columns(pl.lit(None, pl.String).alias("id"))
-    )
-    audit_writer.add_table(
-        "reduced rr transplants :", df_collection["rr"], "reduced_rr"
-    )
+    df_collection = group_and_reduce_transplant_rr(audit_writer, df_collection)
 
     # =====================< COMBINE RADAR & RR >==================
+
     audit_writer.add_text("merging transplants data")
     audit_writer.set_ws("transplant_merge")
     audit_writer.add_table(
@@ -243,9 +179,11 @@ def transplant_run(
         df_collection["radar"],
         "unmerged_radar_transplants",
     )
+
     combine_df = pl.concat(
         [df_collection["radar"], df_collection["rr"]], how="diagonal_relaxed"
     )
+
     audit_writer.add_table("transplants after merge", combine_df, "merged_transplants")
 
     # =====================< GROUP AND REDUCE >==================
@@ -339,7 +277,70 @@ def transplant_run(
     # TODO check that rr ids are in radar by querying
 
 
-def format_transplant(df_collection, rr_radar_mapping, sessions):
+def group_and_reduce_transplant_rr(
+    audit_writer: AuditWriter | StubObject, df_collection: dict[str : pl.DataFrame]
+) -> dict[str : pl.DataFrame]:
+    """
+    Groups and reduces transplant data from the 'rr' session.
+
+    Args:
+        audit_writer: AuditWriter or StubObject instance for writing audit logs.
+        df_collection: A dictionary containing DataFrames corresponding to each session.
+
+    Returns:
+        pl.DataFrame: The grouped and reduced DataFrame for the 'rr' session.
+    """
+
+    cols = df_collection["rr"].columns
+    df_collection["rr"] = (df_collection["rr"].sort("patient_id", "date")).with_columns(
+        pl.col(col_name).shift().over("patient_id").alias(f"{col_name}_shifted")
+        for col_name in cols
+    )
+    mask = abs(pl.col("date") - pl.col("date_shifted")) <= pl.duration(days=5)
+    df_collection["rr"] = df_collection["rr"].with_columns(
+        pl.when(mask).then(0).otherwise(1).over("patient_id").alias("group_id")
+    )
+    df_collection["rr"] = df_collection["rr"].with_columns(
+        pl.col("group_id").cumsum().rle_id().over("patient_id").alias("group_id")
+    )
+    audit_writer.add_table(
+        "transplants from rr grouped", df_collection["rr"], "grouped_rr"
+    )
+    audit_writer.add_text("reducing rr transplants data ...")
+    df_collection["rr"] = (
+        df_collection["rr"]
+        .groupby(["patient_id", "group_id"])
+        .agg(
+            **{
+                col: pl.col(col).first()
+                for col in cols
+                if col not in ["patient_id", "group_id"]
+            }
+        )
+        .drop("group_id")
+        .with_columns(pl.lit(None, pl.String).alias("id"))
+    )
+    audit_writer.add_table(
+        "reduced rr transplants :", df_collection["rr"], "reduced_rr"
+    )
+    return df_collection
+
+
+def format_transplant(
+    df_collection: dict[str : pl.DataFrame], rr_radar_mapping, sessions
+):
+    """
+    Formats transplant data from the 'rr' session.
+
+    Args:
+        df_collection: A dictionary containing DataFrames corresponding to each session.
+        rr_radar_mapping: DataFrame containing RR radar mapping data.
+        sessions: Dictionary of session managers.
+
+    Returns:
+        dict: A dictionary containing the formatted DataFrame for the 'rr' session.
+    """
+
     df_collection["rr"] = (
         df_collection["rr"]
         .with_columns(
@@ -385,6 +386,7 @@ def treatment_run(
     satellite: pl.DataFrame,
     sessions: dict[str, SessionManager],
     ukrdc_radar_mapping: pl.DataFrame,
+    commit: bool = False,
 ) -> None:
     """
     function that controls the flow of treatment rows/data
@@ -505,17 +507,18 @@ def treatment_run(
         pl.lit(100).alias("modified_user_id"),
     )
 
-    return None
-    export_to_sql(
-        session=sessions["radar"],
-        data=new_treatments,
-        tablename="dialysis",
-        contains_pk=True,
-    )
+    if commit:
+        export_to_sql(
+            session=sessions["radar"],
+            data=new_treatments,
+            tablename="dialysis",
+            contains_pk=True,
+        )
+    else:
+        return
 
 
 if __name__ == "__main__":
-
     logger.info("script start")
     args = get_args()
 
@@ -535,7 +538,7 @@ if __name__ == "__main__":
     if args.test_run:
         params["test_run"] = args.test_run
 
-    logger.info(f"Auditing directory: {args.audit}")
+    logger.info(f"Auditing directory: {args.audit}") if args.audit else None
 
     # Recording start time
     start_time = datetime.now()

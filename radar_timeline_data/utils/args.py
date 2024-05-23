@@ -1,5 +1,6 @@
 import argparse
 
+
 def get_args():
     parser = argparse.ArgumentParser(description="TimeLineData importer script")
     # Add the arguments
