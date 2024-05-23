@@ -1,3 +1,4 @@
+import inspect
 import os
 import random
 from typing import Any
@@ -16,6 +17,7 @@ from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor, Inches
 from docx.text.paragraph import Paragraph
 from docx.text.run import Run
+from loguru import logger
 from openpyxl.utils import get_column_letter
 
 
@@ -45,6 +47,7 @@ class AuditWriter:
         filename: str,
         include_excel: bool = True,
         include_breakdown: bool = True,
+        include_logger: bool = True,
     ):
         """
         Initializes an AuditWriter object.
@@ -78,6 +81,8 @@ class AuditWriter:
             self.current_worksheet = None
             self.worksheets = {}
 
+        self.__logger = logger if include_logger else StubObject()
+
     def add_change(self, description: str, old: Any, new: Any):
         """
         Adds a change description along with old and new data representations to the document.
@@ -107,6 +112,8 @@ class AuditWriter:
             run = para.add_run("\u21A7 \n")
             run.font.size = Pt(20)
             para.add_run(str(new) + "\n")
+
+        self.__logger.info(description)
 
     def add_hyperlink(self, paragraph, url, text):
         """
@@ -158,8 +165,10 @@ class AuditWriter:
         run.font.highlight_color = WD_COLOR_INDEX.GRAY_25
         if severity:
             self.important_High += 1
+            self.__logger.critical(text)
         else:
             self.important_Low += 1
+            self.__logger.warning(text)
 
     def add_info(self, key: str, value: str):
         """
@@ -174,6 +183,7 @@ class AuditWriter:
         """
 
         self.info[key] = value
+        self.__logger.info(f"{key} : {value}")
 
     def add_table(self, text: str, table: pl.DataFrame, table_name: str):
         """
@@ -211,6 +221,12 @@ class AuditWriter:
                 include_header=True,
             )
             self.worksheets[self.current_worksheet] += len(table.columns) + 1
+            call = inspect.getframeinfo(inspect.currentframe().f_back)
+            self.__logger.info(
+                f"{call.function}:{call.lineno} {text} \n {table_name} created "
+                f"at file path {self.filename}.xlsx#{self.current_worksheet}!"
+                f"{get_column_letter(self.worksheets[self.current_worksheet] + 1)}1"
+            )
 
     def add_table_snippets(self, table: pl.DataFrame):
         """

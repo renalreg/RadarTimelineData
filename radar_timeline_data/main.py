@@ -9,6 +9,7 @@ import argparse
 from datetime import datetime
 
 import polars as pl
+from loguru import logger
 
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
 from radar_timeline_data.utils.connections import (
@@ -72,11 +73,19 @@ def audit():
     a.commit_audit()
 
 
-def main(audit_writer: AuditWriter | StubObject = StubObject()):
+def main(
+    audit_writer: AuditWriter | StubObject = StubObject(),
+    commit: bool = False,
+    test_run: bool = False,
+    max_data_lifetime: int | None = None,
+) -> None:
     """
     main function for flow of script
     Args:
         audit_writer: Object used for writing readable audit files
+        commit: boolean to indicate whether or not to commit
+        test_run: boolean to indicate whether or not to run on test databases
+        max_data_lifetime: maximum age of data
 
     Returns:
 
@@ -110,7 +119,6 @@ def main(audit_writer: AuditWriter | StubObject = StubObject()):
     treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping)
 
     audit_writer.add_text("Starting Transplant Run", "Heading 3")
-    return None
 
     rr_radar_mapping = get_rr_to_radarnumber_map(sessions)
 
@@ -317,15 +325,6 @@ def transplant_run(
     )
     # =====================< SANITY CHECKS  >==================
 
-    print(
-        combine_df.filter(
-            ~pl.col("source_type").is_in(
-                ["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"]
-            )
-        )
-        .get_column("source_type")
-        .shape
-    )
     if combine_df.filter(
         ~pl.col("source_type").is_in(["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"])
     ).get_column("source_type").shape != (0,):
@@ -473,7 +472,7 @@ def treatment_run(
 
     # =====================< SPLIT >==================
     # split treatments
-    print(reduced_dataframe)
+
     existing_treatments, new_treatments = split_combined_dataframe(
         combined_dataframe, reduced_dataframe
     )
@@ -494,9 +493,6 @@ def treatment_run(
 
     # =====================< WRITE TO DATABASE >==================
 
-    with pl.Config(tbl_cols=-1):
-        print(new_treatments)
-        print(existing_treatments)
     new_treatments = new_treatments.slice(0, 1)
     new_treatments = new_treatments.drop(
         ["source_type", "id", "created_user_id", "modified_user_id", "recent_date"]
@@ -506,7 +502,7 @@ def treatment_run(
         pl.lit(100).alias("created_user_id"),
         pl.lit(100).alias("modified_user_id"),
     )
-    print(new_treatments)
+
     return None
     export_to_sql(
         session=sessions["radar"],
@@ -517,8 +513,10 @@ def treatment_run(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="TimeLineData importer script")
-    # Add the arguments
+    logger.info("script start")
+
+    # Parsing command line arguments
+    parser = argparse.ArgumentParser(description="TimelineData importer script")
     parser.add_argument("-a", "--audit", type=str, help="Audit a directory")
     parser.add_argument(
         "-c", "--commit", help="Commit to server", action="store_true", default=False
@@ -526,36 +524,49 @@ if __name__ == "__main__":
     parser.add_argument(
         "-tr",
         "--test_run",
-        help="run on staging servers",
+        help="Run on staging servers",
         action="store_true",
         default=False,
     )
-    # Parse the arguments
     args = parser.parse_args()
 
-    # Use the arguments
-    if args.audit:
-        print(f"Auditing directory: {args.audit}")
-        audit = AuditWriter(
+    # Setting up parameters
+    params = {}
+    audit = (
+        AuditWriter(
             f"{args.audit}", "delta", include_excel=True, include_breakdown=True
         )
+        if args.audit
+        else StubObject()
+    )
+    params["audit_writer"] = audit
 
-        start_time = datetime.now()
-        audit.add_info("start time", start_time.strftime("%Y-%m-%d %H:%M"))
-        main(audit_writer=audit)
-        end_time = datetime.now()
-        audit.add_info("end time", end_time.strftime("%Y-%m-%d %H:%M"))
-        total_seconds = (end_time - start_time).total_seconds()
-        hours, remainder = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        audit.add_info(
-            "total time", f"{(hours)} hours {(minutes)} mins {int(seconds)} seconds"
-        )
-        audit.commit_audit()
-
-    else:
-        main()
     if args.commit:
-        print(f"Commit with verbosity level: {args.commit}")
+        params["commit"] = args.commit
     if args.test_run:
-        print("testing")
+        params["test_run"] = args.test_run
+
+    logger.info(f"Auditing directory: {args.audit}")
+
+    # Recording start time
+    start_time = datetime.now()
+    audit.add_info("start time", start_time.strftime("%Y-%m-%d %H:%M"))
+
+    # Calling main function
+    main(**params)
+
+    # Recording end time
+    end_time = datetime.now()
+    audit.add_info("end time", end_time.strftime("%Y-%m-%d %H:%M"))
+
+    # Calculating and recording total time
+    total_seconds = (end_time - start_time).total_seconds()
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    audit.add_info("total time", f"{hours} hours {minutes} mins {int(seconds)} seconds")
+    audit.commit_audit()
+
+    # Logging script completion
+    logger.success(
+        f"script finished in {hours} hours {minutes} mins {int(seconds)} seconds"
+    )
