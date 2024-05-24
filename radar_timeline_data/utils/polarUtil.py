@@ -37,6 +37,10 @@ def column_name_and_type_change(
     return df_collection
 
 
+def max_with_nulls(column: pl.Expr) -> pl.Expr:
+    return column.sort(descending=True, nulls_last=False).first()
+
+
 def group_and_reduce_ukrdc_dataframe(
     df_collection: dict[str, pl.DataFrame],
     audit_writer: AuditWriter | StubObject = StubObject(),
@@ -74,7 +78,7 @@ def group_and_reduce_ukrdc_dataframe(
         .group_by(["patient_id", "modality", "group_id"])
         .agg(
             pl.col("from_date").min(),
-            pl.col("to_date").max(),
+            max_with_nulls(pl.col("to_date")).alias("to_date"),
             **{
                 col: pl.col(col).first()
                 for col in df_collection["ukrdc"].columns
@@ -410,6 +414,8 @@ def format_treatment(
             default="None",
         )
     )
+    # TODO report checks df_collection["ukrdc"].filter(pl.col("patient_id") == "None").is_empty():
+
     # TODO check the RG224 code
     df_collection["ukrdc"] = df_collection["ukrdc"].with_columns(
         healthcarefacilitycode=pl.col("healthcarefacilitycode").replace(
