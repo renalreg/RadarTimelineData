@@ -117,7 +117,7 @@ def group_and_reduce_ukrdc_dataframe(
         .group_by(["patient_id", "group_id"])
         .agg(
             pl.col("from_date").min(),
-            pl.col("to_date").max(),
+            max_with_nulls(pl.col("to_date")).alias("to_date"),
             pl.col("modality").first(),
             **{
                 col: pl.col(col).first()
@@ -251,6 +251,7 @@ def split_combined_dataframe(
             )
         )
     )
+    # TODO check if filter is required
     return existing_rows, new_rows
 
 

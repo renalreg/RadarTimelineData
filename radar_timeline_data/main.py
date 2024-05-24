@@ -396,6 +396,7 @@ def treatment_run(
         satellite: map of satellites and main units
         sessions: dictionary of sessions must contain "ukrdc" and "radar"
         ukrdc_radar_mapping: map of ukrdc localpatientid to radar patient_id
+        commit: flag to allow for data to be committed
     """
 
     # =====================< GET TREATMENTS >==================
@@ -435,10 +436,6 @@ def treatment_run(
     del codes, ukrdc_radar_mapping, satellite, cols
 
     # =====================< REDUCE >==================
-
-    # TODO remove this
-    # df_collection["ukrdc"] = df_collection["ukrdc"].filter(pl.col("patient_id") == 242)
-    # df_collection["radar"] = df_collection["radar"].filter(pl.col("patient_id") == 242)
 
     audit_writer.set_ws("group_reduce_Treatment")
     df_collection["ukrdc"] = group_and_reduce_ukrdc_dataframe(
