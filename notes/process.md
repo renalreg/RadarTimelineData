@@ -93,6 +93,60 @@ Rename fields as follows:
 ## EXPORT Data
 
 
-
+---
 # Transplant Data
 
+## Step 1: Import Data
+
+- Import transplant data from UKRR and RADAR.
+
+## Step 2: Map and Drop `RR_NO`
+
+- Replace the `RR_NO` column with `patient_id` using the `rr_radar_mapping` and then drop the `RR_NO` column.
+
+## Step 3: Transplant Unit Conversion
+
+- Apply the `convert_transplant_unit` function to `df_collection` with the `sessions` data.
+
+## Step 4: Update Transplant Modality
+
+- Apply the `get_rr_transplant_modality` function to `df_collection["rr"]`.
+
+## Step 5: Rename Columns
+
+- Rename the following columns:
+    - `TRANSPLANT_UNIT` to `transplant_group_id`
+    - `UKT_FAIL_DATE` to `date_of_failure`
+    - `TRANSPLANT_DATE` to `date`
+    - `HLA_MISMATCH` to `hla_mismatch`
+
+## Step 6: Drop Unnecessary Columns
+
+- Drop the following columns:
+    - `TRANSPLANT_TYPE`
+    - `TRANSPLANT_ORGAN`
+    - `TRANSPLANT_RELATIONSHIP`
+    - `TRANSPLANT_SEX`
+
+## Step 7: Add New Columns
+
+- Add the following columns with static values:
+    - `source_group_id` with the value `200`
+    - `source_type` with the value `"RR"`
+
+## Group and Reduce
+
+### UKRR Transplants
+
+1. Sort the UKRR transplants by `patient_id` and `date`.
+2. Shift dates within the same `patient_id`.
+3. Apply run-length encoding (RLE) on overlapping dates.
+4. Select the first values of each group.
+
+### Combine RADAR and UKRR
+
+1. Combine the RADAR and UKRR transplants.
+2. Sort the combined transplants by `patient_id` and `date`.
+3. Shift dates within the same `patient_id`.
+4. Apply run-length encoding (RLE) on overlapping dates.
+5. Select the first values of each group and the first non-null ID if available.
