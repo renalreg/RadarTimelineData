@@ -20,6 +20,39 @@ from docx.text.run import Run
 from loguru import logger
 from openpyxl.utils import get_column_letter
 
+table_styles = [
+    "Table Style Medium 1",
+    "Table Style Medium 2",
+    "Table Style Medium 3",
+    "Table Style Medium 4",
+    "Table Style Medium 5",
+    "Table Style Medium 6",
+    "Table Style Medium 7",
+    "Table Style Medium 8",
+    "Table Style Medium 9",
+    "Table Style Light 1",
+    "Table Style Light 2",
+    "Table Style Light 3",
+    "Table Style Light 4",
+    "Table Style Light 5",
+    "Table Style Light 6",
+    "Table Style Light 7",
+    "Table Style Light 8",
+    "Table Style Light 9",
+    "Table Style Light 10",
+    "Table Style Light 11",
+    "Table Style Dark 1",
+    "Table Style Dark 2",
+    "Table Style Dark 3",
+    "Table Style Dark 4",
+    "Table Style Dark 5",
+    "Table Style Dark 6",
+    "Table Style Dark 7",
+    "Table Style Dark 8",
+    "Table Style Dark 9",
+    "Table Style Dark 10",
+]
+
 
 class AuditWriter:
     """
@@ -55,14 +88,22 @@ class AuditWriter:
         Parameters:
         - directory (str): The directory where the output files will be saved.
         - filename (str): The name of the audit file.
+        - include_excel (bool): Whether to allow excel files to be generated
+        - include_breakdown (bool): Whether to include top info section in doc contain info such as warnings
         """
+
+        # file init
         self.directory = directory
         self.filename = filename
         self.document = Document()
+
+        # set style
         self.stylesheet = self.__stylesheet()
         self.__style()
 
+        # add heading
         self.document.add_heading(f"Audit {filename}", 0)
+        # add process sub heading
         self.document.add_paragraph("Proccess", style="Heading 1")
 
         # for top breakdown
@@ -81,6 +122,7 @@ class AuditWriter:
             self.current_worksheet = None
             self.worksheets = {}
 
+        # select logger object
         self.__logger = logger if include_logger else StubObject()
 
     def add_change(self, description: str, old: Any, new: Any):
@@ -95,8 +137,12 @@ class AuditWriter:
         Returns:
             None
         """
+
+        # description of the change
         para = self.document.add_paragraph(description)
         para.style = "List Bullet"
+
+        # if change is a dataframe
         if isinstance(old, pl.DataFrame) and isinstance(new, pl.DataFrame):
             self.add_table_snippets(old)
             para = self.document.add_paragraph()
@@ -105,6 +151,7 @@ class AuditWriter:
             run.font.size = Pt(20)
             self.add_table_snippets(new)
 
+        # if change is an object
         elif isinstance(old, list) and isinstance(new, list):
             para = self.document.add_paragraph()
             para.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -113,6 +160,7 @@ class AuditWriter:
             run.font.size = Pt(20)
             para.add_run(str(new) + "\n")
 
+        # log change
         self.__logger.info(description)
 
     def add_hyperlink(self, paragraph, url, text):
@@ -123,27 +171,31 @@ class AuditWriter:
         - paragraph: The paragraph to which the hyperlink will be added.
         - url (str): The URL of the hyperlink.
         - text (str): The text to be displayed for the hyperlink.
-        - color: Color of the hyperlink.
         """
+
         part = paragraph.part
         r_id = part.relate_to(
             url, docx.opc.constants.RELATIONSHIP_TYPE.HYPERLINK, is_external=True
         )
         hyperlink = docx.oxml.shared.OxmlElement("w:hyperlink")
         hyperlink.set(docx.oxml.shared.qn("r:id"), r_id)
+
         new_run = docx.oxml.shared.OxmlElement("w:r")
         rPr = docx.oxml.shared.OxmlElement("w:rPr")
         new_run.append(rPr)
         new_run.text = text
         hyperlink.append(new_run)
+
         r = paragraph.add_run()
         r._r.append(hyperlink)
+
         link = self.stylesheet.get("Link")
         color = link.get("color") if link is not None else None
         r.font.color.rgb = (
             self.stylesheet.get("Link").get("color") if color else RGBColor(255, 0, 0)
         )
         r.font.underline = True
+
         return hyperlink
 
     def add_important(self, text: str, severity: bool):
@@ -204,14 +256,9 @@ class AuditWriter:
                 table_name,
             )
             # Define a list of available table styles
-            available_styles = [
-                "Table Style Medium 2",
-                "Table Style Medium 3",
-                "Table Style Medium 4",
-            ]
 
             # Select a random style
-            random_style = random.choice(available_styles)
+            random_style = random.choice(table_styles)
             table.write_excel(
                 workbook=self.wb,
                 worksheet=self.current_worksheet,
@@ -261,6 +308,7 @@ class AuditWriter:
             para.style = style
 
         para.paragraph_format.left_indent = Inches(0.25)
+        self.__logger.info(text)
         # para.paragraph_format.right_indent = Inches(0.25)
 
     def __stylesheet(self):

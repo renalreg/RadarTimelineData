@@ -210,7 +210,7 @@ def sessions_to_treatment_dfs(
     df_collection["radar"] = sessions["radar"].get_data_as_df(radar_query)
     # workaround for object type causing weird issues in schema
     df_collection["radar"] = df_collection["radar"].drop("id").rename({"id_str": "id"})
-
+    # TODO filter out ids in radar that have not imported from ukrdc to avoid storing them along script life
     # =================<  GET UKRDC  >===============
 
     temp = filter.to_list()

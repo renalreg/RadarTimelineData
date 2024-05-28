@@ -47,4 +47,5 @@ $ python radar_timeline_data/main.py -c -a /path/to/directory
 Additional notes on how to deploy this on a live or release system. Explaining the most important branches, what pipelines they trigger and how to update the database (if anything special).
 
 ## Additional Documentation and Acknowledgments
+description of process [here](notes/process.md)
 
