@@ -1,105 +1,57 @@
 import polars as pl
 from rr_connection_manager import SQLServerConnection
 from rr_connection_manager.classes.postgres_connection import PostgresConnection
-from sqlalchemy import create_engine, text, update, Table, MetaData
-from sqlalchemy.orm import Session, Query
+from sqlalchemy import text, update, Table, MetaData
 
 
-class SessionManager:
+def get_data_as_df(session, query) -> pl.DataFrame:
     """
-    A class to manage database sessions and queries, supporting both SQL Server and PostgreSQL connections.
-    It also allows for connecting to databases through an rr connection manager.
-    Offers functionality to retrieve data from the database as a Polars DataFrame or as a query object.
+    Retrieves data from the database using the provided query and returns it as a Polars DataFrame.
 
-    Attributes:
-    - db_uri (str | None): The database URI for creating a new engine. Default is None.
-    - driver (str | None): The driver to use for the database connection. Default is None.
-    - connection_manager_passthrough (str | None): A string indicating the connection manager to use. Default is None.
-    - session: The SQLAlchemy session object for interacting with the database.
-    - engine: The SQLAlchemy engine object for database connection management.
+    Args:
+    - query (str): SQL query to execute
 
-    Methods:
-    - __init__(self, db_uri: str | None = None, driver: str | None = None, connection_manager_passthrough: str | None = None):
-        Initializes the SessionManager with the provided database URI, driver, and connection manager.
-    - get_data_as_df(self, query) -> pl.DataFrame:
-        Retrieves data from the database using the provided query and returns it as a Polars DataFrame.
-    - get_data_as_result(self, query):
-        Retrieves data from the database using the provided query and returns it as a result object.
+    Returns:
+    - Polars DataFrame containing the result of the query
     """
-
-    def __init__(
-        self,
-        db_uri: str | None = None,
-        driver: str | None = None,
-        connection_manger_passthrough: str | None = None,
-    ):
-        if connection_manger_passthrough:
-            if connection_manger_passthrough == "rr_live":
-                conn = SQLServerConnection(app="rr_live")
-
-            else:
-                conn = PostgresConnection(
-                    app=connection_manger_passthrough, tunnel=True, via_app=True
-                )
-            self.session = conn.session()
-            self.engine = self.session.bind
-        else:
-            self.engine = create_engine(
-                f"{db_uri}?driver={driver}", pool_timeout=360000
-            )
-            self.session = Session(self.engine, future=True)
-
-    def get_data_as_df(self, query) -> pl.DataFrame:
-        """
-        Retrieves data from the database using the provided query and returns it as a Polars DataFrame.
-
-        Args:
-        - query (str): SQL query to execute
-
-        Returns:
-        - Polars DataFrame containing the result of the query
-        """
-        # TODO convert to database uri
-        return pl.read_database(
-            query.statement,
-            connection=self.session.bind,
-            schema_overrides={
-                "updatedon": pl.Datetime,
-                "externalid": pl.String,
-                "donor_hla": pl.String,
-                "recipient_hla": pl.String,
-                "graft_loss_cause": pl.String,
-                "date_of_cmv_infection": pl.Date,
-                "date": pl.Date,
-                "date_of_failure": pl.Date,
-                "date_of_recurrence": pl.Date,
-                "CHI_NO": pl.String,
-                "HSC_NO": pl.String,
-            },
-        )
-
-    def get_data_as_result(self, query) -> Query:
-        return self.session.query(query)
+    # TODO convert to database uri
+    return pl.read_database(
+        query.statement,
+        connection=session.bind,
+        schema_overrides={
+            "updatedon": pl.Datetime,
+            "externalid": pl.String,
+            "donor_hla": pl.String,
+            "recipient_hla": pl.String,
+            "graft_loss_cause": pl.String,
+            "date_of_cmv_infection": pl.Date,
+            "date": pl.Date,
+            "date_of_failure": pl.Date,
+            "date_of_recurrence": pl.Date,
+            "CHI_NO": pl.String,
+            "HSC_NO": pl.String,
+        },
+    )
 
 
-def create_sessions() -> dict[str, SessionManager]:
+def create_sessions() -> (
+    dict[str, PostgresConnection.session | SQLServerConnection.session]
+):
     """
-    Create and initialize session managers for different databases.
 
     Returns:
         dict: A dictionary containing initialized SessionManager instances for each database session.
     """
-    sessions = {
-        "ukrdc": SessionManager(
-            connection_manger_passthrough="ukrdc_staging",
-        ),
-        "radar": SessionManager(connection_manger_passthrough="radar_staging"),
-        "rr": SessionManager(
-            db_uri="mssql+pyodbc://rr-sql-live/renalreg",
-            driver="SQL+Server+Native+Client+11.0",
-        ),
+
+    return {
+        "ukrdc": PostgresConnection(
+            app="ukrdc_staging", tunnel=True, via_app=True
+        ).session(),
+        "radar": PostgresConnection(
+            app="radar_staging", tunnel=True, via_app=True
+        ).session(),
+        "rr": SQLServerConnection(app="renalreg_live").session(),
     }
-    return sessions
 
 
 def get_ukrdcid_to_radarnumber_map(sessions: dict[str, SessionManager]) -> pl.DataFrame:
