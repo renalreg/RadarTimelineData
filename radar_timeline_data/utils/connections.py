@@ -110,7 +110,7 @@ def map_ukrdcid_to_radar_number(session: SessionManager) -> pl.DataFrame:
         .filter(PatientNumber.organization == "RADAR")
     )
 
-    return session.session.get_data_as_df(query).unique(subset=["pid"], keep="first")
+    return session.get_data_as_df(query).unique(subset=["pid"], keep="first")
 
 
 def filter_and_convert(df: pl.DataFrame, number_group_id: int) -> str:
@@ -306,7 +306,7 @@ LEFT JOIN
 
 def get_modality_codes(session: SessionManager) -> pl.DataFrame:
     query = select(ModalityCodes.registry_code, ModalityCodes.equiv_modality)
-    return session.session.get_data_as_df(query).drop_nulls()
+    return session.get_data_as_df(query).drop_nulls()
 
 
 def get_sattelite_map(session: SessionManager) -> pl.DataFrame:
@@ -320,9 +320,7 @@ def get_sattelite_map(session: SessionManager) -> pl.DataFrame:
     - pl.DataFrame: A Polars DataFrame containing unique satellite codes and their corresponding main unit codes.
     """
     query = select(SatelliteMap.satellite_code, SatelliteMap.main_unit_code)
-    return session.session.get_data_as_df(query).unique(
-        subset=["satellite_code"], keep="first"
-    )
+    return session.get_data_as_df(query).unique(subset=["satellite_code"], keep="first")
 
 
 def get_source_group_id_mapping(session: SessionManager) -> pl.DataFrame:
