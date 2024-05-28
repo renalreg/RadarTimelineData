@@ -1,8 +1,9 @@
 import polars as pl
 from rr_connection_manager import SQLServerConnection
 from rr_connection_manager.classes.postgres_connection import PostgresConnection
-from sqlalchemy import create_engine, text, update, Table, MetaData
+from sqlalchemy import create_engine, text, update, Table, MetaData, select
 from sqlalchemy.orm import Session, Query
+from ukrdc_sqla.ukrdc import ModalityCodes, SatelliteMap, PatientRecord, PatientNumber
 
 
 class SessionManager:
@@ -61,7 +62,7 @@ class SessionManager:
         """
         # TODO convert to database uri
         return pl.read_database(
-            query.statement,
+            query,
             connection=self.session.bind,
             schema_overrides={
                 "updatedon": pl.Datetime,
@@ -102,33 +103,14 @@ def create_sessions() -> dict[str, SessionManager]:
     return sessions
 
 
-def get_ukrdcid_to_radarnumber_map(sessions: dict[str, SessionManager]) -> pl.DataFrame:
-    # TODO check for any refactoring in the query as a join may not be needed will need to look at mapper that uses return value
-    ukrdc_query = sessions["ukrdc"].session.query(
-        text(
-            """
-            pr.pid,
-            pr.ukrdcid,
-            pr.localpatientid
-            FROM treatment AS t 
-            JOIN patientrecord AS pr
-            ON t.pid = pr.pid
-            """
-        )
+def map_ukrdcid_to_radar_number(session: SessionManager) -> pl.DataFrame:
+    query = (
+        select(PatientRecord.ukrdcid, PatientNumber.patientid, PatientNumber.pid)
+        .join(PatientNumber, PatientRecord.pid == PatientNumber.pid)
+        .filter(PatientNumber.organization == "RADAR")
     )
-    ukrdc_patient_data = sessions["ukrdc"].get_data_as_df(ukrdc_query)
 
-    # Query to get patient numbers from radar
-    # TODO check what sourcetype means (RADAR AND UKRDC)
-    radar_query = sessions["radar"].session.query(
-        text("patient_id, number FROM public.patient_numbers")
-    )
-    radar_patient_numbers = sessions["radar"].get_data_as_df(radar_query)
-
-    # Merge the DataFrames
-    return radar_patient_numbers.join(
-        ukrdc_patient_data, left_on="number", right_on="localpatientid", how="inner"
-    ).unique(subset=["pid"], keep="first")
+    return session.session.get_data_as_df(query).unique(subset=["pid"], keep="first")
 
 
 def filter_and_convert(df: pl.DataFrame, number_group_id: int) -> str:
@@ -322,12 +304,9 @@ LEFT JOIN
     return df_collection
 
 
-def get_modality_codes(sessions: dict[str, SessionManager]) -> pl.DataFrame:
-    query = sessions["ukrdc"].session.query(
-        text("""registry_code, equiv_modality FROM modality_codes""")
-    )
-    codes = sessions["ukrdc"].get_data_as_df(query).drop_nulls()
-    return codes
+def get_modality_codes(session: SessionManager) -> pl.DataFrame:
+    query = select(ModalityCodes.registry_code, ModalityCodes.equiv_modality)
+    return session.session.get_data_as_df(query).drop_nulls()
 
 
 def get_sattelite_map(session: SessionManager) -> pl.DataFrame:
@@ -340,10 +319,10 @@ def get_sattelite_map(session: SessionManager) -> pl.DataFrame:
     Returns:
     - pl.DataFrame: A Polars DataFrame containing unique satellite codes and their corresponding main unit codes.
     """
-    query = session.session.query(
-        text(""" satellite_code, main_unit_code FROM satellite_map""")
+    query = select(SatelliteMap.satellite_code, SatelliteMap.main_unit_code)
+    return session.session.get_data_as_df(query).unique(
+        subset=["satellite_code"], keep="first"
     )
-    return session.get_data_as_df(query).unique(subset=["satellite_code"], keep="first")
 
 
 def get_source_group_id_mapping(session: SessionManager) -> pl.DataFrame:

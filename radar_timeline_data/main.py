@@ -5,7 +5,6 @@ This script handles the import and processing of timeline data, including treatm
 
 """
 
-import argparse
 from datetime import datetime
 
 import polars as pl
@@ -13,7 +12,7 @@ from loguru import logger
 
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
 from radar_timeline_data.utils.connections import (
-    get_ukrdcid_to_radarnumber_map,
+    map_ukrdcid_to_radar_number,
     sessions_to_treatment_dfs,
     create_sessions,
     get_modality_codes,
@@ -98,8 +97,9 @@ def main(
     audit_writer.add_text("starting script", style="Heading 4")
     sessions = create_sessions()
 
-    # get codes from ukrdc, get healthcare facility mapping
-    codes, satellite, ukrdc_radar_mapping = codes_and_satellites(sessions)
+    codes = get_modality_codes(sessions["ukrdc"])
+    satellite = get_sattelite_map(sessions["ukrdc"])
+    ukrdc_radar_mapping = map_ukrdcid_to_radar_number(sessions["ukrdc"])
 
     # write tables to audit
     audit_writer.set_ws(worksheet_name="mappings")
@@ -130,22 +130,6 @@ def main(
     # close the sessions connection
     for session in sessions.values():
         session.session.close()
-
-
-def codes_and_satellites(sessions: dict[str, SessionManager]):
-    """
-    Get modality codes and satellite, ukrdc to radar map from sessions.
-
-    Args:
-        sessions: Dictionary of session managers.
-
-    Returns:
-        Tuple containing modality codes and satellite map.
-    """
-    codes = get_modality_codes(sessions)
-    satellite = get_sattelite_map(sessions["ukrdc"])
-    ukrdc_radar_mapping = get_ukrdcid_to_radarnumber_map(sessions)
-    return codes, satellite, ukrdc_radar_mapping
 
 
 def transplant_run(
@@ -515,7 +499,6 @@ def treatment_run(
 
 
 if __name__ == "__main__":
-
     logger.info("script start")
     args = get_args()
 
