@@ -3,8 +3,10 @@ from typing import List
 
 import polars as pl
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
+from radar_timeline_data.utils.connections import get_data_as_df
 
 
 def column_name_and_type_change(
@@ -536,7 +538,7 @@ def get_rr_transplant_modality(rr_df: pl.DataFrame) -> pl.DataFrame:
     return rr_df
 
 
-def convert_transplant_unit(df_collection, sessions):
+def convert_transplant_unit(df_collection, sessions: dict[str, Session]):
     """
     Converts transplant unit codes in a DataFrame using a mapping obtained from a database session.
 
@@ -553,7 +555,7 @@ def convert_transplant_unit(df_collection, sessions):
 
     query = (
         sessions["radar"]
-        .session.query(
+        .query(
             text(
                 """
                 id, code FROM groups
@@ -562,7 +564,7 @@ def convert_transplant_unit(df_collection, sessions):
         )
         .filter(text("type = 'HOSPITAL'"))
     )
-    kmap = sessions["radar"].get_data_as_df(query)
+    kmap = get_data_as_df(sessions["radar"], query)
     df_collection["rr"] = df_collection["rr"].with_columns(
         TRANSPLANT_UNIT=pl.col("TRANSPLANT_UNIT").replace(
             kmap.get_column("code"),
