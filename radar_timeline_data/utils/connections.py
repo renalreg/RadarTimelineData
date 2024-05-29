@@ -41,10 +41,6 @@ def create_sessions() -> dict[str, Session]:
     Returns:
         dict: A dictionary containing initialized SessionManager instances for each database session.
     """
-    engine = create_engine(
-        "mssql+pyodbc://rr-sql-live/renalreg?driver=SQL+Server+Native+Client+11.0",
-        pool_timeout=360000,
-    )
 
     return {
         "ukrdc": PostgresConnection(
@@ -53,7 +49,7 @@ def create_sessions() -> dict[str, Session]:
         "radar": PostgresConnection(
             app="radar_staging", tunnel=True, via_app=True
         ).session(),
-        "rr": Session(engine, future=True),
+        "rr": SQLServerConnection(app="renalreg_live").session(),
     }
 
 
