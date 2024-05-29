@@ -9,6 +9,7 @@ from datetime import datetime
 
 import polars as pl
 from loguru import logger
+from sqlalchemy.orm import Session
 
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
 from radar_timeline_data.utils.args import get_args
@@ -19,7 +20,6 @@ from radar_timeline_data.utils.connections import (
     get_modality_codes,
     get_sattelite_map,
     get_source_group_id_mapping,
-    SessionManager,
     sessions_to_transplant_dfs,
     get_rr_to_radarnumber_map,
     export_to_sql,
@@ -59,7 +59,7 @@ def main(
     audit_writer.add_text("starting script", style="Heading 4")
     sessions = create_sessions()
 
-    codes = get_modality_codes(sessions["ukrdc"])
+    codes = get_modality_codes(sessions)
     satellite = get_sattelite_map(sessions["ukrdc"])
     ukrdc_radar_mapping = map_ukrdcid_to_radar_number(sessions["ukrdc"])
 
@@ -91,12 +91,28 @@ def main(
     # send to database
     # close the sessions connection
     for session in sessions.values():
-        session.session.close()
+        session.close()
+
+
+def codes_and_satellites(sessions: dict[str, Session]):
+    """
+    Get modality codes and satellite, ukrdc to radar map from sessions.
+
+    Args:
+        sessions: Dictionary of session managers.
+
+    Returns:
+        Tuple containing modality codes and satellite map.
+    """
+    codes = get_modality_codes(sessions)
+    satellite = get_sattelite_map(sessions["ukrdc"])
+    ukrdc_radar_mapping = map_ukrdcid_to_radar_number(sessions["radar"])
+    return codes, satellite, ukrdc_radar_mapping
 
 
 def transplant_run(
     audit_writer: AuditWriter | StubObject,
-    sessions: dict[str, SessionManager],
+    sessions: dict[str, Session],
     ukrdc_radar_mapping: pl.DataFrame,
     rr_radar_mapping: pl.DataFrame,
     commit: bool = False,
@@ -263,7 +279,7 @@ def transplant_run(
 
 
 def group_and_reduce_transplant_rr(
-    audit_writer: AuditWriter | StubObject, df_collection: dict[str : pl.DataFrame]
+    audit_writer: AuditWriter | StubObject, df_collection: dict[str, pl.DataFrame]
 ) -> dict[str : pl.DataFrame]:
     """
     Groups and reduces transplant data from the 'rr' session.
@@ -312,7 +328,7 @@ def group_and_reduce_transplant_rr(
 
 
 def format_transplant(
-    df_collection: dict[str : pl.DataFrame], rr_radar_mapping, sessions
+    df_collection: dict[str, pl.DataFrame], rr_radar_mapping, sessions
 ):
     """
     Formats transplant data from the 'rr' session.
@@ -369,7 +385,7 @@ def treatment_run(
     audit_writer: AuditWriter | StubObject,
     codes: pl.DataFrame,
     satellite: pl.DataFrame,
-    sessions: dict[str, SessionManager],
+    sessions: dict[str, Session],
     ukrdc_radar_mapping: pl.DataFrame,
     commit: bool = False,
 ) -> None:
