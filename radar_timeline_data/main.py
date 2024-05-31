@@ -386,7 +386,7 @@ def treatment_run(
 
     # =====================< GET TREATMENTS >==================
     df_collection = sessions_to_treatment_dfs(
-        sessions, ukrdc_radar_mapping.get_column("patient_id")
+        sessions, ukrdc_radar_mapping.get_column("number")
     )
 
     audit_writer.add_text("importing Treatment data from:")
@@ -398,7 +398,7 @@ def treatment_run(
         text="  RADAR", table=df_collection["radar"], table_name="treatment_radar"
     )
     cols = df_collection["ukrdc"].columns
-
+    a = df_collection["ukrdc"]
     source_group_id_mapping = get_source_group_id_mapping(sessions["radar"])
 
     # =====================< Formatting >==================

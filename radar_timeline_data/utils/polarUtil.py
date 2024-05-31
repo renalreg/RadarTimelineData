@@ -418,7 +418,7 @@ def format_treatment(
         )
     )
     # TODO report checks df_collection["ukrdc"].filter(pl.col("patient_id") == "None").is_empty():
-    a = df_collection["ukrdc"]
+    a = df_collection["ukrdc"].filter(pl.col("patient_id").is_null())
     # TODO check the RG224 code
     df_collection["ukrdc"] = df_collection["ukrdc"].with_columns(
         healthcarefacilitycode=pl.col("healthcarefacilitycode").replace(
