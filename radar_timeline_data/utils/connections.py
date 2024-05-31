@@ -1,11 +1,23 @@
 import polars as pl
+import radar_models.radar2
+import ukrdc_sqla.ukrdc
+from radar_models.radar2 import Dialysi
+from radar_models.radar3 import Dialysis
 from rr_connection_manager import SQLServerConnection
 from rr_connection_manager.classes.postgres_connection import PostgresConnection
-from sqlalchemy import text, update, Table, MetaData, create_engine
+from sqlalchemy import text, update, Table, MetaData, create_engine, String, cast
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text, update, Table, MetaData, select
 from sqlalchemy.orm import Session, Query
-from ukrdc_sqla.ukrdc import ModalityCodes, SatelliteMap, PatientRecord, PatientNumber
+from ukrdc_sqla.ukrdc import (
+    ModalityCodes,
+    SatelliteMap,
+    PatientRecord,
+    PatientNumber,
+    Treatment,
+)
+import ukrr_models.nhsbt_models as nhsbt_models
+import ukrdc_sqla.ukrdc as ukrdc
 
 
 def get_data_as_df(session, query) -> pl.DataFrame:
@@ -20,7 +32,7 @@ def get_data_as_df(session, query) -> pl.DataFrame:
     """
     # TODO convert to database uri
     return pl.read_database(
-        query.statement,
+        query,
         connection=session.bind,
         schema_overrides={
             "updatedon": pl.Datetime,
@@ -34,6 +46,7 @@ def get_data_as_df(session, query) -> pl.DataFrame:
             "date_of_recurrence": pl.Date,
             "CHI_NO": pl.String,
             "HSC_NO": pl.String,
+            "update_date": pl.Datetime,
         },
     )
 
@@ -45,6 +58,11 @@ def create_sessions() -> dict[str, Session]:
         dict: A dictionary containing initialized SessionManager instances for each database session.
     """
 
+    engine = create_engine(
+        "mssql+pyodbc://rr-sql-live/renalreg?driver=SQL+Server+Native+Client+11.0",
+        pool_timeout=360000,
+    )
+
     return {
         "ukrdc": PostgresConnection(
             app="ukrdc_staging", tunnel=True, via_app=True
@@ -52,19 +70,32 @@ def create_sessions() -> dict[str, Session]:
         "radar": PostgresConnection(
             app="radar_staging", tunnel=True, via_app=True
         ).session(),
-        "rr": SQLServerConnection(app="renalreg_live").session(),
+        "rr": Session(engine, future=True),
     }
 
 
-def map_ukrdcid_to_radar_number(session: Session) -> pl.DataFrame:
-    # TODO check for any refactoring in the query as a join may not be needed will need to look at mapper that uses return value
-    query = (
-        select(PatientRecord.ukrdcid, PatientNumber.patientid, PatientNumber.pid)
-        .join(PatientNumber, PatientRecord.pid == PatientNumber.pid)
-        .filter(PatientNumber.organization == "RADAR")
+def map_ukrdcid_to_radar_number(sessions: dict[str, Session]) -> pl.DataFrame:
+    ukrdc_query = select(
+        ukrdc.PatientRecord.pid,
+        ukrdc.PatientRecord.ukrdcid,
+        ukrdc.PatientRecord.localpatientid,
+    ).join(ukrdc.Treatment, ukrdc.Treatment.pid == ukrdc.PatientRecord.pid)
+
+    ukrdc_patient_data = get_data_as_df(sessions["ukrdc"], ukrdc_query)
+
+    # Query to get patient numbers from radar
+    # TODO check what sourcetype means (RADAR AND UKRDC)
+    radar_query = select(
+        radar_models.radar2.PatientNumber.patient_id,
+        radar_models.radar2.PatientNumber.number,
     )
 
-    return get_data_as_df(session,query).unique(subset=["pid"], keep="first")
+    radar_patient_numbers = get_data_as_df(sessions["radar"], radar_query)
+
+    # Merge the DataFrames
+    return radar_patient_numbers.join(
+        ukrdc_patient_data, left_on="number", right_on="localpatientid", how="inner"
+    ).unique(subset=["pid"], keep="first")
 
 
 def filter_and_convert(df: pl.DataFrame, number_group_id: int) -> str:
@@ -140,7 +171,7 @@ def get_rr_to_radarnumber_map(sessions: dict[str, Session]) -> pl.DataFrame:
 
 
 def sessions_to_treatment_dfs(
-    sessions: dict, filter: pl.Series
+    sessions: dict[str, Session], filter: pl.Series
 ) -> dict[str, pl.DataFrame]:
     """
     Convert sessions data into DataFrame collection holding treatments.
@@ -158,39 +189,35 @@ def sessions_to_treatment_dfs(
 
     # =======================<  GET RADAR   >====================
 
-    radar_query = sessions["radar"].query(
-        text("*, CAST(id AS VARCHAR) AS id_str FROM dialysis")
-    )
+    radar_query = select(Dialysi, cast(Dialysi.id, String).label("id_str"))
+
     df_collection["radar"] = get_data_as_df(sessions["radar"], radar_query)
     # workaround for object type causing weird issues in schema
     df_collection["radar"] = df_collection["radar"].drop("id").rename({"id_str": "id"})
     # TODO filter out ids in radar that have not imported from ukrdc to avoid storing them along script life
     # =================<  GET UKRDC  >===============
-
-    temp = filter.to_list()
-    in_clause = ",".join([f"'{str(value)}'" for value in temp])
+    temp = filter.cast(pl.String).to_list()
     # Extract data for "ukrdc" session
     ukrdc_query = (
         sessions["ukrdc"]
         .query(
-            text(
-                """id,
-                t.pid,
-                t.idx,
-                t.fromtime,
-                t.totime,
-                t.creation_date,
-                t.admitreasoncode,
-                t.healthcarefacilitycode,
-                pr.localpatientid,
-                pr.ukrdcid,
-                t.update_date FROM treatment as t
-                JOIN patientrecord AS pr
-                ON t.pid = pr.pid"""
-            )
+            Treatment.id,
+            Treatment.pid,
+            Treatment.idx,
+            Treatment.fromtime,
+            Treatment.totime,
+            Treatment.creation_date,
+            Treatment.admitreasoncode,
+            Treatment.healthcarefacilitycode,
+            PatientRecord.localpatientid,
+            PatientRecord.ukrdcid,
+            Treatment.update_date,
         )
-        .filter(text(f"pr.localpatientid IN ({in_clause})"))
+        .join(PatientRecord, Treatment.pid == PatientRecord.pid)
+        .filter(PatientRecord.localpatientid.in_(temp))
+        .statement
     )
+
     df_collection["ukrdc"] = get_data_as_df(sessions["ukrdc"], ukrdc_query)
 
     return df_collection
@@ -215,8 +242,10 @@ def sessions_to_transplant_dfs(
     df_collection = {}
 
     # Extract data for "radar" session
-    radar_query = sessions["radar"].query(
-        text("CAST(id AS VARCHAR) AS id_str, *" " FROM transplants")
+
+    radar_query = select(
+        radar_models.radar2.Transplant.id.label("id_str"),
+        radar_models.radar2.Transplant,
     )
     df_collection["radar"] = (
         get_data_as_df(sessions["radar"], radar_query)
@@ -251,7 +280,27 @@ LEFT JOIN
         )
         .filter(text(f"[RR_NO] in ({in_clause})"))
     )
-    """['patient_id', 'source_group_id', 'source_type', 'transplant_group_id', 'date', 'modality', 'date_of_recurrence', 'date_of_failure', 'recurrence']"""
+    rr_query = (
+        sessions["rr"]
+        .query(
+            nhsbt_models.UKTTransplant.rr_no,
+            nhsbt_models.UKTTransplant.transplant_type,
+            nhsbt_models.UKTTransplant.transplant_organ,
+            nhsbt_models.UKTTransplant.transplant_date,
+            nhsbt_models.UKTTransplant.ukt_fail_date,
+            nhsbt_models.UKTTransplant.hla_mismatch,
+            nhsbt_models.UKTTransplant.transplant_relationship,
+            nhsbt_models.UKTTransplant.transplant_sex,
+            nhsbt_models.UKTSites.rr_code.label("TRANSPLANT_UNIT"),
+        )
+        .join(
+            nhsbt_models.UKTSites,
+            nhsbt_models.UKTTransplant.transplant_unit
+            == nhsbt_models.UKTSites.site_name,
+        )
+        .filter(nhsbt_models.UKTTransplant.rr_no.in_(in_clause))
+        .statement
+    )
 
     df_collection["rr"] = get_data_as_df(sessions["rr"], rr_query)
     return df_collection
@@ -278,9 +327,8 @@ def get_sattelite_map(session: Session) -> pl.DataFrame:
     )
 
 
-
 def get_source_group_id_mapping(session: Session) -> pl.DataFrame:
-    query = session.query(text(""" id, code FROM public.groups ORDER BY id ASC """))
+    query = select(radar_models.radar2.Group.id, radar_models.radar2.Group.code)
     return get_data_as_df(session, query)
 
 

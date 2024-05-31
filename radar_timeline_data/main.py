@@ -61,7 +61,7 @@ def main(
 
     codes = get_modality_codes(sessions)
     satellite = get_sattelite_map(sessions["ukrdc"])
-    ukrdc_radar_mapping = map_ukrdcid_to_radar_number(sessions["ukrdc"])
+    ukrdc_radar_mapping = map_ukrdcid_to_radar_number(sessions)
 
     # write tables to audit
     audit_writer.set_ws(worksheet_name="mappings")
@@ -92,22 +92,6 @@ def main(
     # close the sessions connection
     for session in sessions.values():
         session.close()
-
-
-def codes_and_satellites(sessions: dict[str, Session]):
-    """
-    Get modality codes and satellite, ukrdc to radar map from sessions.
-
-    Args:
-        sessions: Dictionary of session managers.
-
-    Returns:
-        Tuple containing modality codes and satellite map.
-    """
-    codes = get_modality_codes(sessions)
-    satellite = get_sattelite_map(sessions["ukrdc"])
-    ukrdc_radar_mapping = map_ukrdcid_to_radar_number(sessions["radar"])
-    return codes, satellite, ukrdc_radar_mapping
 
 
 def transplant_run(
@@ -360,18 +344,18 @@ def format_transplant(
         df_collection["rr"]
         .rename(
             {
-                "TRANSPLANT_UNIT": "transplant_group_id",
-                "UKT_FAIL_DATE": "date_of_failure",
-                "TRANSPLANT_DATE": "date",
-                "HLA_MISMATCH": "hla_mismatch",
+                "transplant_unit": "transplant_group_id",
+                "ukt_fail_date": "date_of_failure",
+                "transplant_date": "date",
+                "hla_mismatch": "hla_mismatch",
             }
         )
         .drop(
             [
-                "TRANSPLANT_TYPE",
-                "TRANSPLANT_ORGAN",
-                "TRANSPLANT_RELATIONSHIP",
-                "TRANSPLANT_SEX",
+                "transplant_type",
+                "transplant_organ",
+                "transplant_relationship",
+                "transplant_sex",
             ]
         )
         .with_columns(
@@ -402,7 +386,7 @@ def treatment_run(
 
     # =====================< GET TREATMENTS >==================
     df_collection = sessions_to_treatment_dfs(
-        sessions, ukrdc_radar_mapping.get_column("number")
+        sessions, ukrdc_radar_mapping.get_column("patient_id")
     )
 
     audit_writer.add_text("importing Treatment data from:")

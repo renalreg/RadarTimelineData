@@ -418,7 +418,7 @@ def format_treatment(
         )
     )
     # TODO report checks df_collection["ukrdc"].filter(pl.col("patient_id") == "None").is_empty():
-
+    a = df_collection["ukrdc"]
     # TODO check the RG224 code
     df_collection["ukrdc"] = df_collection["ukrdc"].with_columns(
         healthcarefacilitycode=pl.col("healthcarefacilitycode").replace(
@@ -499,11 +499,11 @@ def get_rr_transplant_modality(rr_df: pl.DataFrame) -> pl.DataFrame:
         >>> result = get_rr_transplant_modality(df)
     """
 
-    ttype = pl.col("TRANSPLANT_TYPE")
+    ttype = pl.col("transplant_type")
     alive = ttype.is_in(["Live"])
     dead = ttype.is_in(["DCD", "DBD"])
-    trel = pl.col("TRANSPLANT_RELATIONSHIP")
-    tsex = pl.col("TRANSPLANT_SEX")
+    trel = pl.col("transplant_relationship")
+    tsex = pl.col("transplant_sex")
     father = "1"
     mother = "2"
     # TODO missing 25 to 28
