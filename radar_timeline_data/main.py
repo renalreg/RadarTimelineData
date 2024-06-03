@@ -81,12 +81,13 @@ def main(
     # =======================< TRANSPLANT AND TREATMENT RUNS >====================
     audit_writer.add_text("Starting Treatment Run", "Heading 3")
     treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping, commit)
+    del ukrdc_radar_mapping, codes
 
     audit_writer.add_text("Starting Transplant Run", "Heading 3")
 
     rr_radar_mapping = get_rr_to_radarnumber_map(sessions)
 
-    transplant_run(audit_writer, sessions, ukrdc_radar_mapping, rr_radar_mapping)
+    transplant_run(audit_writer, sessions, rr_radar_mapping)
 
     # send to database
     # close the sessions connection
@@ -97,7 +98,6 @@ def main(
 def transplant_run(
     audit_writer: AuditWriter | StubObject,
     sessions: dict[str, Session],
-    ukrdc_radar_mapping: pl.DataFrame,
     rr_radar_mapping: pl.DataFrame,
     commit: bool = False,
 ):
@@ -107,7 +107,6 @@ def transplant_run(
     Args:
         audit_writer: AuditWriter or StubObject instance for writing audit logs.
         sessions: Dictionary of session managers.
-        ukrdc_radar_mapping: DataFrame containing UKRDC radar mapping data.
         rr_radar_mapping: DataFrame containing RR radar mapping data.
 
     Returns:
@@ -121,9 +120,7 @@ def transplant_run(
     # get transplant data from sessions where radar number
 
     df_collection = sessions_to_transplant_dfs(
-        sessions,
-        ukrdc_radar_mapping.get_column("number"),
-        rr_radar_mapping.get_column("number"),
+        sessions, rr_radar_mapping.get_column("number")
     )
 
     if df_collection["rr"].is_empty():

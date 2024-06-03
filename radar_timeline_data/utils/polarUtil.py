@@ -417,9 +417,9 @@ def format_treatment(
             default="None",
         )
     )
-    # TODO report checks df_collection["ukrdc"].filter(pl.col("patient_id") == "None").is_empty():
-    a = df_collection["ukrdc"].filter(pl.col("patient_id").is_null())
-    # TODO check the RG224 code
+
+    # TODO df_collection["ukrdc"].filter(pl.col("patient_id").is_null())
+
     df_collection["ukrdc"] = df_collection["ukrdc"].with_columns(
         healthcarefacilitycode=pl.col("healthcarefacilitycode").replace(
             satellite.get_column("satellite_code"),
