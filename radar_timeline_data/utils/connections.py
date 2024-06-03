@@ -127,10 +127,12 @@ def get_rr_to_radarnumber_map(sessions: dict[str, Session]) -> pl.DataFrame:
         nhsbt.UKTPatient.new_nhs_no,
         nhsbt.UKTPatient.chi_no,
         nhsbt.UKTPatient.hsc_no,
-    ).filter(
-        nhsbt.UKTPatient.new_nhs_no.in_(nhs_no_filter)
-        | nhsbt.UKTPatient.chi_no.in_(chi_no_filter)
-        | nhsbt.UKTPatient.hsc_no.in_(hsc_filter)
+    ).where(
+        or_(
+            nhsbt.UKTPatient.new_nhs_no.in_(nhs_no_filter),
+            nhsbt.UKTPatient.chi_no.in_(chi_no_filter),
+            nhsbt.UKTPatient.hsc_no.in_(hsc_filter),
+        )
     )
 
     rr_df = get_data_as_df(sessions["rr"], q)
