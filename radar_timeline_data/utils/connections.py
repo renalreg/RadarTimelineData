@@ -5,7 +5,7 @@ import radar_models.radar2 as radar
 import ukrdc_sqla.ukrdc as ukrdc
 import ukrr_models.nhsbt_models as nhsbt
 from rr_connection_manager.classes.postgres_connection import PostgresConnection
-from sqlalchemy import String, cast, or_
+from sqlalchemy import String, cast
 from sqlalchemy import create_engine, update, Table, MetaData, select
 from sqlalchemy.orm import Session
 
@@ -34,8 +34,8 @@ def get_data_as_df(session, query) -> pl.DataFrame:
             "date": pl.Date,
             "date_of_failure": pl.Date,
             "date_of_recurrence": pl.Date,
-            "CHI_NO": pl.String,
-            "HSC_NO": pl.String,
+            "chi_no": pl.String,
+            "hsc_no": pl.String,
             "update_date": pl.Datetime,
         },
     )
@@ -98,8 +98,10 @@ def filter_and_convert(df: pl.DataFrame, number_group_id: int) -> List[int]:
     Returns:
 
     """
-    filtered_df = df.filter(pl.col("number_group_id") == number_group_id).cast(
-        {"number": pl.Int64}
+    filtered_df = (
+        df.filter(pl.col("number_group_id") == number_group_id)
+        .cast({"number": pl.Int64})
+        .unique(subset=["number"], keep="first")
     )
     return filtered_df.get_column("number").to_list()
 
@@ -121,37 +123,57 @@ def get_rr_to_radarnumber_map(sessions: dict[str, Session]) -> pl.DataFrame:
     nhs_no_filter = filter_and_convert(df, 120)
     chi_no_filter = filter_and_convert(df, 121)
     hsc_filter = filter_and_convert(df, 122)
-
+    rr_df = pl.DataFrame()
     q = select(
         nhsbt.UKTPatient.rr_no,
         nhsbt.UKTPatient.new_nhs_no,
         nhsbt.UKTPatient.chi_no,
         nhsbt.UKTPatient.hsc_no,
-    ).where(
-        or_(
-            nhsbt.UKTPatient.new_nhs_no.in_(nhs_no_filter),
-            nhsbt.UKTPatient.chi_no.in_(chi_no_filter),
-            nhsbt.UKTPatient.hsc_no.in_(hsc_filter),
-        )
+    )
+    rr_df = find_nhs_chi_hsc_numbers_in_rr(
+        [nhs_no_filter, chi_no_filter, hsc_filter],
+        [nhsbt.UKTPatient.new_nhs_no, nhsbt.UKTPatient.chi_no, nhsbt.UKTPatient.hsc_no],
+        rr_df,
+        sessions["rr"],
+        q,
     )
 
-    rr_df = get_data_as_df(sessions["rr"], q)
-    a = rr_df.filter(pl.col("NEW_NHS_NO").is_not_null()).cast({"NEW_NHS_NO": pl.String})
-    b = rr_df.filter(pl.col("CHI_NO").is_not_null()).cast({"CHI_NO": pl.String})
-    c = rr_df.filter(pl.col("HSC_NO").is_not_null()).cast({"HSC_NO": pl.String})
+    a = rr_df.filter(pl.col("new_nhs_no").is_not_null()).cast({"new_nhs_no": pl.String})
+    b = rr_df.filter(pl.col("chi_no").is_not_null()).cast({"chi_no": pl.String})
+    c = rr_df.filter(pl.col("hsc_no").is_not_null()).cast({"hsc_no": pl.String})
     nhs_df = df.filter(pl.col("number_group_id") == 120).join(
-        a.select(["NEW_NHS_NO", "RR_NO"]), left_on="number", right_on="NEW_NHS_NO"
+        a.select(["new_nhs_no", "rr_no"]), left_on="number", right_on="new_nhs_no"
     )
     chi_df = df.filter(pl.col("number_group_id") == 121).join(
-        b.select(["CHI_NO", "RR_NO"]), left_on="number", right_on="CHI_NO"
+        b.select(["chi_no", "rr_no"]), left_on="number", right_on="chi_no"
     )
     hsc_df = df.filter(pl.col("number_group_id") == 122).join(
-        c.select(["HSC_NO", "RR_NO"]), left_on="number", right_on="HSC_NO"
+        c.select(["hsc_no", "rr_no"]), left_on="number", right_on="hsc_no"
     )
     result_df = pl.concat([nhs_df, chi_df, hsc_df])
-    result_df = result_df.unique(["RR_NO", "patient_id"])
-    result_df = result_df.drop("number").rename({"RR_NO": "number"}).sort("patient_id")
+    result_df = result_df.unique(["rr_no", "patient_id"])
+    result_df = result_df.drop("number").rename({"rr_no": "number"}).sort("patient_id")
+    # TODO below statemnet is a temp fix as some numbers are null which should not be the case
+    result_df = result_df.filter(pl.col("number").is_not_null())
     return result_df
+
+
+def find_nhs_chi_hsc_numbers_in_rr(
+    no_filters, filter_names, rr_df, session, original_query
+):
+    chunk_size = 2000  # Adjust based on your needs
+    for no_filter, filter_name in zip(no_filters, filter_names):
+        chunks = [
+            no_filter[i : i + chunk_size] for i in range(0, len(no_filter), chunk_size)
+        ]
+        for chunk in chunks:
+            query = original_query.filter(filter_name.in_(chunk))
+            if rr_df.is_empty():
+                rr_df = get_data_as_df(session, query)
+            else:
+                rr_df = pl.concat([rr_df, get_data_as_df(session, query)])
+    # TODO CHECK THAT CONCAT HAS ALL VALUES AND IS NOT MISSING ANY
+    return rr_df
 
 
 def sessions_to_treatment_dfs(
@@ -235,34 +257,34 @@ def sessions_to_transplant_dfs(
         .drop(columns="id")
         .rename({"id_str": "id"})
     )
-    temp = rr_filter.to_list()
-    in_clause = ",".join([f"'{str(value)}'" for value in temp])
+    in_clause = rr_filter.to_list()
 
     # transplant unit -> transplant group id
     # will need to add hla 000 column to db
 
-    rr_query = (
-        sessions["rr"]
-        .query(
-            nhsbt.UKTTransplant.rr_no,
-            nhsbt.UKTTransplant.transplant_type,
-            nhsbt.UKTTransplant.transplant_organ,
-            nhsbt.UKTTransplant.transplant_date,
-            nhsbt.UKTTransplant.ukt_fail_date,
-            nhsbt.UKTTransplant.hla_mismatch,
-            nhsbt.UKTTransplant.transplant_relationship,
-            nhsbt.UKTTransplant.transplant_sex,
-            nhsbt.UKTSites.rr_code.label("TRANSPLANT_UNIT"),
-        )
-        .join(
-            nhsbt.UKTSites,
-            nhsbt.UKTTransplant.transplant_unit == nhsbt.UKTSites.site_name,
-        )
-        .filter(nhsbt.UKTTransplant.rr_no.in_(in_clause))
-        .statement
+    rr_query = select(
+        nhsbt.UKTTransplant.rr_no,
+        nhsbt.UKTTransplant.transplant_type,
+        nhsbt.UKTTransplant.transplant_organ,
+        nhsbt.UKTTransplant.transplant_date,
+        nhsbt.UKTTransplant.ukt_fail_date,
+        nhsbt.UKTTransplant.hla_mismatch,
+        nhsbt.UKTTransplant.transplant_relationship,
+        nhsbt.UKTTransplant.transplant_sex,
+        nhsbt.UKTSites.rr_code.label("TRANSPLANT_UNIT"),
+    ).join(
+        nhsbt.UKTSites,
+        nhsbt.UKTTransplant.transplant_unit == nhsbt.UKTSites.site_name,
     )
-
-    df_collection["rr"] = get_data_as_df(sessions["rr"], rr_query)
+    df_collection["rr"] = pl.DataFrame()
+    df_collection["rr"] = find_nhs_chi_hsc_numbers_in_rr(
+        [in_clause],
+        [nhsbt.UKTTransplant.rr_no],
+        df_collection["rr"],
+        sessions["rr"],
+        rr_query,
+    )
+    # df_collection["rr"] = get_data_as_df(sessions["rr"], rr_query)
     return df_collection
 
 

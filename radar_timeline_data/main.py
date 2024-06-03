@@ -326,7 +326,7 @@ def format_transplant(
     df_collection["rr"] = (
         df_collection["rr"]
         .with_columns(
-            patient_id=pl.col("RR_NO").replace(
+            patient_id=pl.col("rr_no").replace(
                 rr_radar_mapping.get_column("number"),
                 rr_radar_mapping.get_column("patient_id"),
                 default="None",
@@ -341,7 +341,7 @@ def format_transplant(
         df_collection["rr"]
         .rename(
             {
-                "transplant_unit": "transplant_group_id",
+                "TRANSPLANT_UNIT": "transplant_group_id",
                 "ukt_fail_date": "date_of_failure",
                 "transplant_date": "date",
                 "hla_mismatch": "hla_mismatch",

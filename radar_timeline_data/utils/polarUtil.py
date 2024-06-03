@@ -2,7 +2,8 @@ from datetime import datetime
 from typing import List
 
 import polars as pl
-from sqlalchemy import text
+import radar_models.radar2 as radar
+from sqlalchemy import text, select
 from sqlalchemy.orm import Session
 
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
@@ -553,16 +554,8 @@ def convert_transplant_unit(df_collection, sessions: dict[str, Session]):
         KeyError: If the 'TRANSPLANT_UNIT' column is missing in the 'rr' DataFrame.
     """
 
-    query = (
-        sessions["radar"]
-        .query(
-            text(
-                """
-                id, code FROM groups
-"""
-            )
-        )
-        .filter(text("type = 'HOSPITAL'"))
+    query = select(radar.Group.id, radar.Group.code).filter(
+        radar.Group.type == "HOSPITAL"
     )
     kmap = get_data_as_df(sessions["radar"], query)
     df_collection["rr"] = df_collection["rr"].with_columns(
