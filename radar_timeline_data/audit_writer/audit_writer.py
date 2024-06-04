@@ -222,7 +222,7 @@ class AuditWriter:
             self.important_Low += 1
             self.__logger.warning(text)
 
-    def add_info(self, key: str, value: str):
+    def add_info(self, key: str, value: str | tuple[str, str]):
         """
         Adds information to the audit writer.
 
@@ -233,8 +233,13 @@ class AuditWriter:
         Returns:
             None
         """
-
-        self.info[key] = value
+        if type(value) is tuple:
+            if key in self.info:
+                self.info[key][value[0]] = value[1]
+            else:
+                self.info[key] = {value[0]: value[1]}
+        else:
+            self.info[key] = value
         self.__logger.info(f"{key} : {value}")
 
     def add_table(self, text: str, table: pl.DataFrame, table_name: str):
@@ -355,23 +360,23 @@ class AuditWriter:
         """
         if not self.__include_breakdown:
             return
+
         paragraph = self.document.paragraphs[1].insert_paragraph_before()
         run = paragraph.add_run("\u26A0")
         self.__format_run(run, Pt(16), (255, 204, 0))
-        paragraph.add_run(f" {str(self.important_Low)} Warnings raised ")
-        self.__set_paragraph_spacing(paragraph, 0, 0)
+        paragraph.add_run(f" {str(self.important_Low)} Warnings raised \n")
 
-        paragraph = paragraph.insert_paragraph_before()
-        self.__set_paragraph_spacing(paragraph, 0, 0)
         run = paragraph.add_run("\u26A0")
         self.__format_run(run, Pt(16), (204, 51, 0))
-        paragraph.add_run(f" {str(self.important_High)} Issues raised ")
-        self.__set_paragraph_spacing(paragraph, 0, 0)
+        paragraph.add_run(f" {str(self.important_High)} Issues raised \n")
 
-        for info in reversed(self.info):
-            paragraph = paragraph.insert_paragraph_before()
-            paragraph.add_run(f"{info} : {self.info[info]}")
-            self.__set_paragraph_spacing(paragraph, 0, 0)
+        for element in reversed(self.info):
+            if type(self.info[element]) is dict:
+                paragraph.add_run(f"{element}:\n")
+                for key, value in self.info[element].items():
+                    run = paragraph.add_run(f"\t• {key}: {value}\n")
+            else:
+                paragraph.add_run(f"{element}: {self.info[element]}\n")
 
         paragraph.insert_paragraph_before("breakdown", style="Heading 1")
 
