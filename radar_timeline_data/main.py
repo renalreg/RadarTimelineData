@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
 from radar_timeline_data.utils.args import get_args
 from radar_timeline_data.utils.connections import (
-    get_ukrdcid_to_radarnumber_map,
+    map_ukrdcid_to_radar_number,
     sessions_to_treatment_dfs,
     create_sessions,
     get_modality_codes,
@@ -59,8 +59,9 @@ def main(
     audit_writer.add_text("starting script", style="Heading 4")
     sessions = create_sessions()
 
-    # get codes from ukrdc, get healthcare facility mapping
-    codes, satellite, ukrdc_radar_mapping = codes_and_satellites(sessions)
+    codes = get_modality_codes(sessions)
+    satellite = get_sattelite_map(sessions["ukrdc"])
+    ukrdc_radar_mapping = map_ukrdcid_to_radar_number(sessions)
 
     # write tables to audit
     audit_writer.set_ws(worksheet_name="mappings")
@@ -80,12 +81,13 @@ def main(
     # =======================< TRANSPLANT AND TREATMENT RUNS >====================
     audit_writer.add_text("Starting Treatment Run", "Heading 3")
     treatment_run(audit_writer, codes, satellite, sessions, ukrdc_radar_mapping, commit)
+    del ukrdc_radar_mapping, codes
 
     audit_writer.add_text("Starting Transplant Run", "Heading 3")
 
     rr_radar_mapping = get_rr_to_radarnumber_map(sessions)
 
-    transplant_run(audit_writer, sessions, ukrdc_radar_mapping, rr_radar_mapping)
+    transplant_run(audit_writer, sessions, rr_radar_mapping)
 
     # send to database
     # close the sessions connection
@@ -93,26 +95,9 @@ def main(
         session.close()
 
 
-def codes_and_satellites(sessions: dict[str, Session]):
-    """
-    Get modality codes and satellite, ukrdc to radar map from sessions.
-
-    Args:
-        sessions: Dictionary of session managers.
-
-    Returns:
-        Tuple containing modality codes and satellite map.
-    """
-    codes = get_modality_codes(sessions)
-    satellite = get_sattelite_map(sessions["ukrdc"])
-    ukrdc_radar_mapping = get_ukrdcid_to_radarnumber_map(sessions)
-    return codes, satellite, ukrdc_radar_mapping
-
-
 def transplant_run(
     audit_writer: AuditWriter | StubObject,
     sessions: dict[str, Session],
-    ukrdc_radar_mapping: pl.DataFrame,
     rr_radar_mapping: pl.DataFrame,
     commit: bool = False,
 ):
@@ -122,7 +107,6 @@ def transplant_run(
     Args:
         audit_writer: AuditWriter or StubObject instance for writing audit logs.
         sessions: Dictionary of session managers.
-        ukrdc_radar_mapping: DataFrame containing UKRDC radar mapping data.
         rr_radar_mapping: DataFrame containing RR radar mapping data.
 
     Returns:
@@ -136,9 +120,7 @@ def transplant_run(
     # get transplant data from sessions where radar number
 
     df_collection = sessions_to_transplant_dfs(
-        sessions,
-        ukrdc_radar_mapping.get_column("number"),
-        rr_radar_mapping.get_column("number"),
+        sessions, rr_radar_mapping.get_column("number")
     )
 
     if df_collection["rr"].is_empty():
@@ -180,6 +162,12 @@ def transplant_run(
         "unmerged_radar_transplants",
     )
 
+    # ['id', 'patient_id', 'source_group_id', 'source_type', 'transplant_group_id', 'date', 'modality', 'date_of_recurrence', 'date_of_failure', 'created_user_id', 'created_date', 'modified_user_id', 'modified_date', 'recurrence', 'date_of_cmv_infection', 'donor_hla', 'recipient_hla', 'graft_loss_cause']
+    # [Object, Int64, Int64, String, Int64, Date, Int64, Date, Date, Int64, Datetime(time_unit='us', time_zone=None), Int64, Datetime(time_unit='us', time_zone=None), Boolean, Date, String, String, String]
+    # ['patient_id', 'rr_no', 'date', 'date_of_failure', 'hla_mismatch', 'transplant_group_id', 'modality', 'source_group_id', 'source_type', 'id']
+    # [String, Int64, Datetime(time_unit='us', time_zone=None), Datetime(time_unit='us', time_zone=None), String, Int64, Int32, Int32, String, String]
+    a = df_collection["rr"]
+    b = df_collection["radar"]
     combine_df = pl.concat(
         [df_collection["radar"], df_collection["rr"]], how="diagonal_relaxed"
     )
@@ -344,7 +332,7 @@ def format_transplant(
     df_collection["rr"] = (
         df_collection["rr"]
         .with_columns(
-            patient_id=pl.col("RR_NO").replace(
+            patient_id=pl.col("rr_no").replace(
                 rr_radar_mapping.get_column("number"),
                 rr_radar_mapping.get_column("patient_id"),
                 default="None",
@@ -360,17 +348,17 @@ def format_transplant(
         .rename(
             {
                 "TRANSPLANT_UNIT": "transplant_group_id",
-                "UKT_FAIL_DATE": "date_of_failure",
-                "TRANSPLANT_DATE": "date",
-                "HLA_MISMATCH": "hla_mismatch",
+                "ukt_fail_date": "date_of_failure",
+                "transplant_date": "date",
+                "hla_mismatch": "hla_mismatch",
             }
         )
         .drop(
             [
-                "TRANSPLANT_TYPE",
-                "TRANSPLANT_ORGAN",
-                "TRANSPLANT_RELATIONSHIP",
-                "TRANSPLANT_SEX",
+                "transplant_type",
+                "transplant_organ",
+                "transplant_relationship",
+                "transplant_sex",
             ]
         )
         .with_columns(
@@ -413,7 +401,7 @@ def treatment_run(
         text="  RADAR", table=df_collection["radar"], table_name="treatment_radar"
     )
     cols = df_collection["ukrdc"].columns
-
+    a = df_collection["ukrdc"]
     source_group_id_mapping = get_source_group_id_mapping(sessions["radar"])
 
     # =====================< Formatting >==================
@@ -493,6 +481,8 @@ def treatment_run(
     )
 
     # =====================< WRITE TO DATABASE >==================
+
+    return
 
     new_treatments = new_treatments.slice(0, 1)
     new_treatments = new_treatments.drop(

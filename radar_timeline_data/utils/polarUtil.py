@@ -2,7 +2,8 @@ from datetime import datetime
 from typing import List
 
 import polars as pl
-from sqlalchemy import text
+import radar_models.radar2 as radar
+from sqlalchemy import text, select
 from sqlalchemy.orm import Session
 
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
@@ -417,9 +418,9 @@ def format_treatment(
             default="None",
         )
     )
-    # TODO report checks df_collection["ukrdc"].filter(pl.col("patient_id") == "None").is_empty():
 
-    # TODO check the RG224 code
+    # TODO df_collection["ukrdc"].filter(pl.col("patient_id").is_null())
+
     df_collection["ukrdc"] = df_collection["ukrdc"].with_columns(
         healthcarefacilitycode=pl.col("healthcarefacilitycode").replace(
             satellite.get_column("satellite_code"),
@@ -499,11 +500,11 @@ def get_rr_transplant_modality(rr_df: pl.DataFrame) -> pl.DataFrame:
         >>> result = get_rr_transplant_modality(df)
     """
 
-    ttype = pl.col("TRANSPLANT_TYPE")
+    ttype = pl.col("transplant_type")
     alive = ttype.is_in(["Live"])
     dead = ttype.is_in(["DCD", "DBD"])
-    trel = pl.col("TRANSPLANT_RELATIONSHIP")
-    tsex = pl.col("TRANSPLANT_SEX")
+    trel = pl.col("transplant_relationship")
+    tsex = pl.col("transplant_sex")
     father = "1"
     mother = "2"
     # TODO missing 25 to 28
@@ -534,7 +535,7 @@ def get_rr_transplant_modality(rr_df: pl.DataFrame) -> pl.DataFrame:
         .then(99)
         .otherwise(None)
         .alias("modality")
-    )
+    ).cast({"modality": pl.Int64})
     return rr_df
 
 
@@ -553,16 +554,8 @@ def convert_transplant_unit(df_collection, sessions: dict[str, Session]):
         KeyError: If the 'TRANSPLANT_UNIT' column is missing in the 'rr' DataFrame.
     """
 
-    query = (
-        sessions["radar"]
-        .query(
-            text(
-                """
-                id, code FROM groups
-"""
-            )
-        )
-        .filter(text("type = 'HOSPITAL'"))
+    query = select(radar.Group.id, radar.Group.code).filter(
+        radar.Group.type == "HOSPITAL"
     )
     kmap = get_data_as_df(sessions["radar"], query)
     df_collection["rr"] = df_collection["rr"].with_columns(
