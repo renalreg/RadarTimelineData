@@ -370,7 +370,7 @@ class AuditWriter:
         self.__format_run(run, Pt(16), (204, 51, 0))
         paragraph.add_run(f" {str(self.important_High)} Issues raised \n")
 
-        for element in reversed(self.info):
+        for element in self.info:
             if type(self.info[element]) is dict:
                 paragraph.add_run(f"{element}:\n")
                 for key, value in self.info[element].items():
