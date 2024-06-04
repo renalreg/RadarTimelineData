@@ -162,6 +162,12 @@ def transplant_run(
         "unmerged_radar_transplants",
     )
 
+    # ['id', 'patient_id', 'source_group_id', 'source_type', 'transplant_group_id', 'date', 'modality', 'date_of_recurrence', 'date_of_failure', 'created_user_id', 'created_date', 'modified_user_id', 'modified_date', 'recurrence', 'date_of_cmv_infection', 'donor_hla', 'recipient_hla', 'graft_loss_cause']
+    # [Object, Int64, Int64, String, Int64, Date, Int64, Date, Date, Int64, Datetime(time_unit='us', time_zone=None), Int64, Datetime(time_unit='us', time_zone=None), Boolean, Date, String, String, String]
+    # ['patient_id', 'rr_no', 'date', 'date_of_failure', 'hla_mismatch', 'transplant_group_id', 'modality', 'source_group_id', 'source_type', 'id']
+    # [String, Int64, Datetime(time_unit='us', time_zone=None), Datetime(time_unit='us', time_zone=None), String, Int64, Int32, Int32, String, String]
+    a = df_collection["rr"]
+    b = df_collection["radar"]
     combine_df = pl.concat(
         [df_collection["radar"], df_collection["rr"]], how="diagonal_relaxed"
     )
@@ -475,6 +481,8 @@ def treatment_run(
     )
 
     # =====================< WRITE TO DATABASE >==================
+
+    return
 
     new_treatments = new_treatments.slice(0, 1)
     new_treatments = new_treatments.drop(

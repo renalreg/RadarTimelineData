@@ -535,7 +535,7 @@ def get_rr_transplant_modality(rr_df: pl.DataFrame) -> pl.DataFrame:
         .then(99)
         .otherwise(None)
         .alias("modality")
-    )
+    ).cast({"modality": pl.Int64})
     return rr_df
 
 

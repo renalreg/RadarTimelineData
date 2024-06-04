@@ -4,6 +4,7 @@ import polars as pl
 import radar_models.radar2 as radar
 import ukrdc_sqla.ukrdc as ukrdc
 import ukrr_models.nhsbt_models as nhsbt
+from rr_connection_manager import SQLServerConnection
 from rr_connection_manager.classes.postgres_connection import PostgresConnection
 from sqlalchemy import String, cast
 from sqlalchemy import create_engine, update, Table, MetaData, select
@@ -48,11 +49,6 @@ def create_sessions() -> dict[str, Session]:
         dict: A dictionary containing initialized SessionManager instances for each database session.
     """
 
-    engine = create_engine(
-        "mssql+pyodbc://rr-sql-live/renalreg?driver=SQL+Server+Native+Client+11.0",
-        pool_timeout=360000,
-    )
-
     return {
         "ukrdc": PostgresConnection(
             app="ukrdc_staging", tunnel=True, via_app=True
@@ -60,7 +56,7 @@ def create_sessions() -> dict[str, Session]:
         "radar": PostgresConnection(
             app="radar_staging", tunnel=True, via_app=True
         ).session(),
-        "rr": Session(engine, future=True),
+        "rr": SQLServerConnection(app="renalreg_live").session(),
     }
 
 
@@ -130,7 +126,7 @@ def get_rr_to_radarnumber_map(sessions: dict[str, Session]) -> pl.DataFrame:
         nhsbt.UKTPatient.chi_no,
         nhsbt.UKTPatient.hsc_no,
     )
-    rr_df = find_nhs_chi_hsc_numbers_in_rr(
+    rr_df = get_database_with_multiple_filters(
         [nhs_no_filter, chi_no_filter, hsc_filter],
         [nhsbt.UKTPatient.new_nhs_no, nhsbt.UKTPatient.chi_no, nhsbt.UKTPatient.hsc_no],
         rr_df,
@@ -158,9 +154,23 @@ def get_rr_to_radarnumber_map(sessions: dict[str, Session]) -> pl.DataFrame:
     return result_df
 
 
-def find_nhs_chi_hsc_numbers_in_rr(
+def get_database_with_multiple_filters(
     no_filters, filter_names, rr_df, session, original_query
 ):
+    """
+    data from the database based on multiple filters.
+
+    Args:
+        no_filters (list): List of filter values.
+        filter_names (list): List of filter names.
+        rr_df (DataFrame): Dataframe to store the filtered data.
+        session: Database session.
+        original_query: Original query to filter data.
+
+    Returns:
+        DataFrame: Dataframe with filtered data.
+    """
+
     chunk_size = 2000  # Adjust based on your needs
     for no_filter, filter_name in zip(no_filters, filter_names):
         chunks = [
@@ -249,7 +259,7 @@ def sessions_to_transplant_dfs(
     # Extract data for "radar" session
 
     radar_query = select(
-        radar.Transplant.id.label("id_str"),
+        cast(radar.Transplant.id, String).label("id_str"),
         radar.Transplant,
     )
     df_collection["radar"] = (
@@ -277,7 +287,7 @@ def sessions_to_transplant_dfs(
         nhsbt.UKTTransplant.transplant_unit == nhsbt.UKTSites.site_name,
     )
     df_collection["rr"] = pl.DataFrame()
-    df_collection["rr"] = find_nhs_chi_hsc_numbers_in_rr(
+    df_collection["rr"] = get_database_with_multiple_filters(
         [in_clause],
         [nhsbt.UKTTransplant.rr_no],
         df_collection["rr"],
