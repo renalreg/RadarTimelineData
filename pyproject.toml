@@ -26,6 +26,7 @@ radar-models = { git = "https://github.com/renalreg/radar-models.git" }
 loguru = "^0.7.2"
 ukrdc-sqla = "^2.5.1"
 ukrr-models = "^2.2.0"
+tenacity = "^8.3.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.1.0"

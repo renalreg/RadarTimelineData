@@ -2,6 +2,7 @@ from typing import List
 
 import polars as pl
 import radar_models.radar2 as radar
+import sqlalchemy
 import ukrdc_sqla.ukrdc as ukrdc
 import ukrr_models.nhsbt_models as nhsbt
 from rr_connection_manager import SQLServerConnection
@@ -9,8 +10,19 @@ from rr_connection_manager.classes.postgres_connection import PostgresConnection
 from sqlalchemy import String, cast
 from sqlalchemy import create_engine, update, Table, MetaData, select
 from sqlalchemy.orm import Session
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
 
 
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    retry=retry_if_exception_type(sqlalchemy.exc.TimeoutError),
+)
 def get_data_as_df(session, query) -> pl.DataFrame:
     """
     Retrieves data from the database using the provided query and returns it as a Polars DataFrame.
