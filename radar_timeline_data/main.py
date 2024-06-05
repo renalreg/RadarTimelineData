@@ -122,7 +122,12 @@ def transplant_run(
     df_collection = sessions_to_transplant_dfs(
         sessions, rr_radar_mapping.get_column("number")
     )
-
+    audit_writer.add_info(
+        "transplant", ("rr data loaded", str(len(df_collection["rr"])))
+    )
+    audit_writer.add_info(
+        "transplant", ("radar data loaded", str(len(df_collection["radar"])))
+    )
     if df_collection["rr"].is_empty():
         audit_writer.add_text("ukrr no transplants to import")
         return None
@@ -251,6 +256,23 @@ def transplant_run(
         combine_df.filter(pl.col("id").is_not_null()),
         "updated_transplant_data",
     )
+
+    audit_writer.add_info(
+        "transplants out",
+        (
+            "total to update/create:",
+            str(len(new_transplant_rows) + len(updated_transplant_rows)),
+        ),
+    )
+    audit_writer.add_info(
+        "transplants out",
+        ("total transplants to update", str(len(updated_transplant_rows))),
+    )
+    audit_writer.add_info(
+        "transplants out",
+        ("total transplants to create", str(len(new_transplant_rows))),
+    )
+
     # =====================< SANITY CHECKS  >==================
 
     if combine_df.filter(
@@ -529,20 +551,22 @@ if __name__ == "__main__":
 
     # Recording start time
     start_time = datetime.now()
-    audit.add_info("start time", start_time.strftime("%Y-%m-%d %H:%M"))
+    audit.add_info("time", ("start time", start_time.strftime("%Y-%m-%d %H:%M")))
 
     # Calling main function
     main(**params)
 
     # Recording end time
     end_time = datetime.now()
-    audit.add_info("end time", end_time.strftime("%Y-%m-%d %H:%M"))
+    audit.add_info("time", ("end time", end_time.strftime("%Y-%m-%d %H:%M")))
 
     # Calculating and recording total time
     total_seconds = (end_time - start_time).total_seconds()
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
-    audit.add_info("total time", f"{hours} hours {minutes} mins {int(seconds)} seconds")
+    audit.add_info(
+        "time", ("total time", f"{hours} hours {minutes} mins {int(seconds)} seconds")
+    )
     audit.commit_audit()
 
     # Logging script completion
