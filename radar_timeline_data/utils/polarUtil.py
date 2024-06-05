@@ -396,7 +396,7 @@ def format_treatment(
     df_collection: dict[str, pl.DataFrame],
     satellite: pl.DataFrame,
     source_group_id_mapping: pl.DataFrame,
-    ukrdc_radar_mapping: pl.DataFrame,
+    radar_patient_id_map: pl.DataFrame,
 ) -> dict[str, pl.DataFrame]:
     """
     Convert data format for UKRDC treatment table.
@@ -411,10 +411,12 @@ def format_treatment(
     Returns:
         dict[str, pl.DataFrame]: Dictionary of DataFrames with updated UKRDC treatment table format.
     """
+    pat_map = radar_patient_id_map.drop_nulls(["ukrdcid"]).unique(subset=["ukrdcid"])
+
     df_collection["ukrdc"] = df_collection["ukrdc"].with_columns(
-        patient_id=pl.col("pid").replace(
-            ukrdc_radar_mapping.get_column("pid"),
-            ukrdc_radar_mapping.get_column("patient_id"),
+        patient_id=pl.col("ukrdcid").replace(
+            pat_map.get_column("ukrdcid"),
+            pat_map.get_column("radar_id"),
             default="None",
         )
     )

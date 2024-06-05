@@ -87,9 +87,9 @@ def add_rr_no_to_map(pat_map, rr_pats, identifier):
     return pat_map
 
 
-def make_patient_map(connections):
-    radar_pats = get_data_as_df(connections["radar"], radar_pat_query)
-    ukrdc_pats = get_data_as_df(connections["ukrdc"], ukrdc_pat_query)
+def make_patient_map(connections) -> pl.DataFrame:
+    radar_pats: pl.DataFrame = get_data_as_df(connections["radar"], radar_pat_query)
+    ukrdc_pats: pl.DataFrame = get_data_as_df(connections["ukrdc"], ukrdc_pat_query)
     pat_map = radar_pats.join(
         ukrdc_pats, left_on="radar_id", right_on="radar_id", how="left"
     )
@@ -110,9 +110,10 @@ def make_patient_map(connections):
     rr_hsc_map = map_rr_to_indentifier(
         connections["rr"], hsc_list, rr.UKRRPatient.hsc_no
     )
-
+    pat_map: pl.DataFrame
     pat_map = add_rr_no_to_map(pat_map, rr_nhs_map, "nhs_no")
     pat_map = add_rr_no_to_map(pat_map, rr_chi_map, "chi_no")
     pat_map = add_rr_no_to_map(pat_map, rr_hsc_map, "hsc_no")
+    pat_map = pat_map.unique()
 
     return pat_map
