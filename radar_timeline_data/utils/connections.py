@@ -50,6 +50,9 @@ def get_data_as_df(session, query) -> pl.DataFrame:
             "chi_no": pl.String,
             "hsc_no": pl.String,
             "update_date": pl.Datetime,
+            "new_nhs_no": pl.String,
+            "radar_id": pl.String,
+            "rr_no": pl.String,
         },
     )
 
