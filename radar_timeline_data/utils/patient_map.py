@@ -1,7 +1,7 @@
 import radar_models.radar2 as radar
 import ukrdc_sqla.ukrdc as ukrdc
 import ukrr_models.rr_models as rr
-from sqlalchemy import case, func, select, or_
+from sqlalchemy import case, select
 import polars as pl
 
 from radar_timeline_data.utils.connections import get_data_as_df
