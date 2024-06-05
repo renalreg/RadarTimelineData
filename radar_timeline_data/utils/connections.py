@@ -1,5 +1,3 @@
-from typing import List
-
 import polars as pl
 import radar_models.radar2 as radar
 import sqlalchemy
@@ -8,7 +6,7 @@ import ukrr_models.nhsbt_models as nhsbt
 from rr_connection_manager import SQLServerConnection
 from rr_connection_manager.classes.postgres_connection import PostgresConnection
 from sqlalchemy import String, cast
-from sqlalchemy import create_engine, update, Table, MetaData, select
+from sqlalchemy import update, Table, MetaData, select
 from sqlalchemy.orm import Session
 from tenacity import (
     retry,
@@ -82,100 +80,6 @@ def create_sessions() -> dict[str, Session]:
     }
 
 
-def map_ukrdcid_to_radar_number(sessions: dict[str, Session]) -> pl.DataFrame:
-    ukrdc_query = select(
-        ukrdc.PatientRecord.pid,
-        ukrdc.PatientRecord.ukrdcid,
-        ukrdc.PatientRecord.localpatientid,
-    ).join(ukrdc.Treatment, ukrdc.Treatment.pid == ukrdc.PatientRecord.pid)
-
-    ukrdc_patient_data = get_data_as_df(sessions["ukrdc"], ukrdc_query)
-
-    # Query to get patient numbers from radar
-    # TODO check what sourcetype means (RADAR AND UKRDC)
-    radar_query = select(
-        radar.PatientNumber.patient_id,
-        radar.PatientNumber.number,
-    )
-
-    radar_patient_numbers = get_data_as_df(sessions["radar"], radar_query)
-
-    # Merge the DataFrames
-    return radar_patient_numbers.join(
-        ukrdc_patient_data, left_on="number", right_on="localpatientid", how="inner"
-    ).unique(subset=["pid"], keep="first")
-
-
-def filter_and_convert(df: pl.DataFrame, number_group_id: int) -> List[int]:
-    """
-    converts df with number_group_id and number column to str of integers.
-    Args:
-        df:
-        number_group_id:
-
-    Returns:
-
-    """
-    filtered_df = (
-        df.filter(pl.col("number_group_id") == number_group_id)
-        .cast({"number": pl.Int64})
-        .unique(subset=["number"], keep="first")
-    )
-    return filtered_df.get_column("number").to_list()
-
-
-def get_rr_to_radarnumber_map(sessions: dict[str, Session]) -> pl.DataFrame:
-    """
-    This function is designed to map UKKRR numbers to radar numbers by querying data from two different databases (
-    radar and rrr) and performing several operations to filter and join the data.
-    :param sessions: dict[str, SessionManager] containing rr and radar sessions
-    :return: pl.DataFrame containing radar number group and rr number
-    """
-    q = select(
-        radar.PatientNumber.patient_id,
-        radar.PatientNumber.number_group_id,
-        radar.PatientNumber.number,
-    ).where(radar.PatientNumber.number_group_id.in_([120, 121, 122, 124]))
-
-    df = get_data_as_df(sessions["radar"], q).unique()
-    nhs_no_filter = filter_and_convert(df, 120)
-    chi_no_filter = filter_and_convert(df, 121)
-    hsc_filter = filter_and_convert(df, 122)
-    rr_df = pl.DataFrame()
-    q = select(
-        nhsbt.UKTPatient.rr_no,
-        nhsbt.UKTPatient.new_nhs_no,
-        nhsbt.UKTPatient.chi_no,
-        nhsbt.UKTPatient.hsc_no,
-    )
-    rr_df = get_database_with_multiple_filters(
-        [nhs_no_filter, chi_no_filter, hsc_filter],
-        [nhsbt.UKTPatient.new_nhs_no, nhsbt.UKTPatient.chi_no, nhsbt.UKTPatient.hsc_no],
-        rr_df,
-        sessions["rr"],
-        q,
-    )
-
-    a = rr_df.filter(pl.col("new_nhs_no").is_not_null()).cast({"new_nhs_no": pl.String})
-    b = rr_df.filter(pl.col("chi_no").is_not_null()).cast({"chi_no": pl.String})
-    c = rr_df.filter(pl.col("hsc_no").is_not_null()).cast({"hsc_no": pl.String})
-    nhs_df = df.filter(pl.col("number_group_id") == 120).join(
-        a.select(["new_nhs_no", "rr_no"]), left_on="number", right_on="new_nhs_no"
-    )
-    chi_df = df.filter(pl.col("number_group_id") == 121).join(
-        b.select(["chi_no", "rr_no"]), left_on="number", right_on="chi_no"
-    )
-    hsc_df = df.filter(pl.col("number_group_id") == 122).join(
-        c.select(["hsc_no", "rr_no"]), left_on="number", right_on="hsc_no"
-    )
-    result_df = pl.concat([nhs_df, chi_df, hsc_df])
-    result_df = result_df.unique(["rr_no", "patient_id"])
-    result_df = result_df.drop("number").rename({"rr_no": "number"}).sort("patient_id")
-    # TODO below statemnet is a temp fix as some numbers are null which should not be the case
-    result_df = result_df.filter(pl.col("number").is_not_null())
-    return result_df
-
-
 def get_database_with_multiple_filters(
     no_filters, filter_names, rr_df, session, original_query
 ):
@@ -222,14 +126,11 @@ def sessions_to_treatment_dfs(
         dict: A dictionary containing DataFrames corresponding to each session.
     """
 
-    # Initialize dictionary to store DataFrames
-    df_collection = {}
-
     # =======================<  GET RADAR   >====================
 
     radar_query = select(radar.Dialysi, cast(radar.Dialysi.id, String).label("id_str"))
 
-    df_collection["radar"] = get_data_as_df(sessions["radar"], radar_query)
+    df_collection = {"radar": get_data_as_df(sessions["radar"], radar_query)}
     # workaround for object type causing weird issues in schema
     df_collection["radar"] = df_collection["radar"].drop("id").rename({"id_str": "id"})
     # TODO filter out ids in radar that have not imported from ukrdc to avoid storing them along script life
@@ -275,24 +176,18 @@ def sessions_to_transplant_dfs(
 
     """
 
-    # Initialize dictionary to store DataFrames
-    df_collection = {}
-
     # Extract data for "radar" session
 
     radar_query = select(
         cast(radar.Transplant.id, String).label("id_str"),
         radar.Transplant,
     )
-    df_collection["radar"] = (
-        get_data_as_df(sessions["radar"], radar_query)
+    df_collection = {
+        "radar": get_data_as_df(sessions["radar"], radar_query)
         .drop(columns="id")
         .rename({"id_str": "id"})
-    )
+    }
     in_clause = rr_filter.to_list()
-
-    # transplant unit -> transplant group id
-    # will need to add hla 000 column to db
 
     rr_query = select(
         nhsbt.UKTTransplant.rr_no,
@@ -321,6 +216,16 @@ def sessions_to_transplant_dfs(
 
 
 def get_modality_codes(sessions: dict[str, Session]) -> pl.DataFrame:
+    """
+    Retrieve modality codes and their equivalent modalities.
+
+    Args:
+        sessions (dict): Dictionary of database sessions.
+
+    Returns:
+        DataFrame: Modality codes and their equivalent modalities with null values dropped.
+    """
+
     query = select(
         ukrdc.ModalityCodes.registry_code, ukrdc.ModalityCodes.equiv_modality
     )
@@ -344,6 +249,16 @@ def get_sattelite_map(session: Session) -> pl.DataFrame:
 
 
 def get_source_group_id_mapping(session: Session) -> pl.DataFrame:
+    """
+    Get the mapping of source group IDs to their corresponding codes.
+
+    Args:
+        session: Database session.
+
+    Returns:
+        DataFrame: Mapping of source group IDs to their codes.
+    """
+
     query = select(radar.Group.id, radar.Group.code)
     return get_data_as_df(session, query)
 

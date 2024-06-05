@@ -5,14 +5,14 @@ import pytest
 from faker import Faker
 from polars.testing import assert_frame_equal
 
-from radar_timeline_data.utils.polarUtil import (
+from radar_timeline_data.utils.treatment_utils import (
     column_name_and_type_change,
-    group_similar_or_overlapping_range,
-    overlapping_dates_bool_mask,
     combine_treatment_dataframes,
     fill_null_time,
     split_combined_dataframe,
-    group_and_reduce_combined_dataframe,
+    group_and_reduce_combined_treatment_dataframe,
+    group_similar_or_overlapping_range,
+    overlapping_dates_bool_mask,
 )
 
 
@@ -495,7 +495,7 @@ def test_group_reduce():
     )
     df = {"ukrdc": df1, "radar": df2}
     df = combine_treatment_dataframes(df)
-    col = group_and_reduce_combined_dataframe(df).get_column("id").to_list()
+    col = group_and_reduce_combined_treatment_dataframe(df).get_column("id").to_list()
     col.sort()
     assert col == [1, 2, 4]
 
@@ -533,7 +533,7 @@ def test_group_reduce():
 
     df = {"ukrdc": df1, "radar": df2}
     df = combine_treatment_dataframes(df)
-    col = group_and_reduce_combined_dataframe(df).get_column("id").to_list()
+    col = group_and_reduce_combined_treatment_dataframe(df).get_column("id").to_list()
     col.sort()
 
     assert col == [0, 1, 4]
@@ -571,7 +571,7 @@ def test_group_reduce():
 
     df = {"ukrdc": df1, "radar": df2}
     df = combine_treatment_dataframes(df)
-    col = group_and_reduce_combined_dataframe(df).get_column("id").to_list()
+    col = group_and_reduce_combined_treatment_dataframe(df).get_column("id").to_list()
     col.sort()
     assert col == [1, 2, 4]
 
@@ -636,6 +636,6 @@ def test_group_reduce():
 
     df = {"ukrdc": df1, "radar": df2}
     df = combine_treatment_dataframes(df)
-    col = group_and_reduce_combined_dataframe(df).get_column("id").to_list()
+    col = group_and_reduce_combined_treatment_dataframe(df).get_column("id").to_list()
     col.sort(key=lambda e: (e is None, e))
     assert col == [4, None, None]
