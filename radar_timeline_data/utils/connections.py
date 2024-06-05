@@ -50,10 +50,20 @@ def get_data_as_df(session, query) -> pl.DataFrame:
             "chi_no": pl.String,
             "hsc_no": pl.String,
             "update_date": pl.Datetime,
+            "new_nhs_no": pl.String,
+            "radar_id": pl.String,
+            "rr_no": pl.String,
         },
     )
 
 
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    retry=retry_if_exception_type(
+        sqlalchemy.exc.TimeoutError | sqlalchemy.exc.OperationalError
+    ),
+)
 def create_sessions() -> dict[str, Session]:
     """
 
@@ -242,7 +252,7 @@ def sessions_to_treatment_dfs(
             ukrdc.Treatment.update_date,
         )
         .join(ukrdc.PatientRecord, ukrdc.Treatment.pid == ukrdc.PatientRecord.pid)
-        .filter(ukrdc.PatientRecord.localpatientid.in_(temp))
+        .filter(ukrdc.PatientRecord.ukrdcid.in_(temp))
         .statement
     )
 
