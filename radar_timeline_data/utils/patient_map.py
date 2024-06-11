@@ -110,7 +110,7 @@ def make_patient_map(connections) -> pl.DataFrame:
     rr_hsc_map = map_rr_to_indentifier(
         connections["rr"], hsc_list, rr.UKRRPatient.hsc_no
     )
-    pat_map: pl.DataFrame
+
     pat_map = add_rr_no_to_map(pat_map, rr_nhs_map, "nhs_no")
     pat_map = add_rr_no_to_map(pat_map, rr_chi_map, "chi_no")
     pat_map = add_rr_no_to_map(pat_map, rr_hsc_map, "hsc_no")

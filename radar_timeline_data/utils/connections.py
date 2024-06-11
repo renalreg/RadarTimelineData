@@ -59,7 +59,7 @@ def get_data_as_df(session, query) -> pl.DataFrame:
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=1, min=4, max=10),
     retry=retry_if_exception_type(
-        sqlalchemy.exc.TimeoutError | sqlalchemy.exc.OperationalError
+        (sqlalchemy.exc.TimeoutError, sqlalchemy.exc.OperationalError)
     ),
 )
 def create_sessions() -> dict[str, Session]:
@@ -163,7 +163,7 @@ def sessions_to_treatment_dfs(
 
 
 def sessions_to_transplant_dfs(
-    sessions: dict[str:Session], rr_filter: pl.Series
+    sessions: dict[str, Session], rr_filter: pl.Series
 ) -> dict[str, pl.DataFrame]:
     """
     Convert sessions data into DataFrame collection holding transplants.

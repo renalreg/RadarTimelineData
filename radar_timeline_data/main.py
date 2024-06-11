@@ -6,6 +6,7 @@ This script handles the import and processing of timeline data, including treatm
 """
 
 from datetime import datetime
+from typing import Any
 
 from loguru import logger
 
@@ -81,20 +82,22 @@ if __name__ == "__main__":
     logger.info("script start")
     args = get_args()
 
-    audit = (
+    audit: AuditWriter | StubObject = (
         AuditWriter(
             f"{args.audit}", "delta", include_excel=True, include_breakdown=True
         )
         if args.audit
         else StubObject()
     )
+    params: dict[str, Any]
     params = {"audit_writer": audit}
     if args.commit:
         params["commit"] = args.commit
     if args.test_run:
         params["test_run"] = args.test_run
 
-    logger.info(f"Auditing directory: {args.audit}") if args.audit else None
+    if args.audit:
+        logger.info(f"Auditing directory: {args.audit}")
 
     # Recording start time
     start_time = datetime.now()

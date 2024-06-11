@@ -200,7 +200,7 @@ def transplant_run(
 
 def group_and_reduce_transplant_rr(
     audit_writer: AuditWriter | StubObject, df_collection: dict[str, pl.DataFrame]
-) -> dict[str : pl.DataFrame]:
+) -> dict[str, pl.DataFrame]:
     """
     Groups and reduces transplant data from the 'rr' session.
 
