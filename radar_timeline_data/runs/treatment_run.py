@@ -1,4 +1,10 @@
+import pandas
 import polars as pl
+import radar_models.radar2 as radar2
+from sqlalchemy import inspect
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.sql import elements
+
 from sqlalchemy.orm import Session
 
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
@@ -15,6 +21,19 @@ from radar_timeline_data.utils.treatment_utils import (
     group_and_reduce_combined_treatment_dataframe,
     format_treatment,
 )
+
+
+def if_key_exists(table, conn, keys, data_iter):
+    data = [dict(zip(keys, row)) for row in data_iter]
+    stmt = insert(table.table).values(data)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["id"],  # Specify the primary key column(s)
+        set_=dict(
+            (col, stmt.excluded[col]) for col in data[0].keys()
+        ),  # Update all columns
+    )
+    result = conn.execute(stmt)
+    return result.rowcount
 
 
 def treatment_run(
@@ -136,23 +155,34 @@ def treatment_run(
 
     # =====================< WRITE TO DATABASE >==================
 
-    return
-
     new_treatments = new_treatments.slice(0, 1)
     new_treatments = new_treatments.drop(
         ["source_type", "id", "created_user_id", "modified_user_id", "recent_date"]
     ).with_columns(
         pl.lit("b91d66f2-cd53-42ec-82f8-8d52de5b5bbc").alias("id"),
-        pl.lit("REP").alias("source_type"),
-        pl.lit(100).alias("created_user_id"),
+        pl.lit("DEL").alias("source_type"),
+        pl.lit(999).alias("created_user_id"),
         pl.lit(100).alias("modified_user_id"),
+    )
+
+    print(new_treatments)
+
+    new_treatments: pandas.DataFrame = new_treatments.to_pandas()
+
+    new_treatments.to_sql(
+        name=radar2.Dialysi.__tablename__,
+        con=sessions["radar"].bind,
+        if_exists="append",
+        index=False,
+        chunksize=1,
+        method=if_key_exists,
     )
 
     if commit:
         export_to_sql(
             session=sessions["radar"],
             data=new_treatments,
-            tablename="dialysis",
+            tablename=radar2.Dialysi,
             contains_pk=True,
         )
     else:
