@@ -5,8 +5,10 @@ import ukrdc_sqla.ukrdc as ukrdc
 import ukrr_models.nhsbt_models as nhsbt
 from rr_connection_manager import SQLServerConnection
 from rr_connection_manager.classes.postgres_connection import PostgresConnection
-from sqlalchemy import String, cast
-from sqlalchemy import update, Table, MetaData, select
+from sqlalchemy import String, cast, FromClause
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from tenacity import (
     retry,
@@ -263,22 +265,48 @@ def get_source_group_id_mapping(session: Session) -> pl.DataFrame:
     return get_data_as_df(session, query)
 
 
-def manual_export_sql(session: Session, data: pl.DataFrame, tablename: str):
-    data = data.to_dicts()
-    # Reflect the table from the database
-    table = Table(tablename, MetaData(), autoload_with=session.bind)
-    session.execute(update(table), data)
+def df_batch_insert_to_sql(
+    dataframe: pl.DataFrame, session: Session, table: FromClause, batch_size: int
+):
+    """
+    Upsert a DataFrame into a specified SQLAlchemy table.
 
+    Parameters:
+    dataframe (pl.DataFrame): The DataFrame to upsert.
+    session (sqlalchemy.orm.Session): The SQLAlchemy session to use for the operation.
+    table (sqlalchemy.Table.__table__): ?.
 
-def export_to_sql(
-    session: Session, data: pl.DataFrame, tablename: str, contains_pk: bool
-) -> None:
-    if contains_pk:
-        manual_export_sql(session, data, tablename)
-    else:
-        data.write_database(
-            table_name=tablename,
-            connection=session.bind.url,
-            if_table_exists="append",
-            engine="sqlalchemy",
-        )
+    Returns:
+    rows_total, rows_failed (int, list[dict[str, Any]])
+    """
+    # Convert the DataFrame to a list of dictionaries
+    rows_total = 0
+    rows_failed = []
+    for start in range(0, len(dataframe), batch_size):
+        end = start + batch_size
+        batch = dataframe.slice(start, end)
+        batch_null = batch.filter(pl.col("id").is_null()).drop(["id"])
+        batch_id = batch.filter(pl.col("id").is_not_null())
+        print(batch_null.to_dicts() + batch_id.to_dicts())
+        data = batch_null.to_dicts() + batch_id.to_dicts()
+        print(data)
+        try:
+            # Create an insert statement
+            stmt = insert(table).values(data)  # type : ignore
+
+            # Define the update action on conflict
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["id"],  # Specify the primary key column(s)
+                set_={
+                    col: stmt.excluded[col] for col in data[0].keys()
+                },  # Update all columns
+            )
+        except SQLAlchemyError as e:
+            rows_failed.extend(data)
+
+        # Execute the statement and commit the transaction
+        result = session.execute(stmt)
+        rows_total += result.rowcount
+        session.commit()
+
+    return rows_total, rows_failed
