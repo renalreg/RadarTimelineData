@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
 from radar_timeline_data.utils.connections import (
     sessions_to_treatment_dfs,
-    get_source_group_id_mapping, df_batch_insert_to_sql,
+    get_source_group_id_mapping,
+    df_batch_insert_to_sql,
 )
 from radar_timeline_data.utils.treatment_utils import (
     group_and_reduce_ukrdc_dataframe,
@@ -162,5 +163,3 @@ def treatment_run(
             audit_writer.add_important(
                 f"{len(failed_rows)} rows of treatment data insert failed", True
             )
-
-
