@@ -33,7 +33,7 @@ def treatment_run(
         codes: map of modality codes and their corresponding equivalent
         satellite: map of satellites and main units
         sessions: dictionary of sessions must contain "ukrdc" and "radar"
-        ukrdc_radar_mapping: map of ukrdc localpatientid to radar patient_id
+        radar_patient_id_map: map of ukrdc localpatientid to radar patient_id
         commit: flag to allow for data to be committed
     """
 
@@ -148,7 +148,7 @@ def treatment_run(
     )
     if commit:
         total_rows, failed_rows = df_batch_insert_to_sql(
-            new_treatments, sessions["radar"], radar2.Dialysi.__table__, 1000
+            new_treatments, sessions["radar"], radar2.Dialysi.__table__, 1000, "id"
         )
         audit_writer.add_text(f"{total_rows} rows of treatment data added or modified")
 

@@ -266,7 +266,11 @@ def get_source_group_id_mapping(session: Session) -> pl.DataFrame:
 
 
 def df_batch_insert_to_sql(
-    dataframe: pl.DataFrame, session: Session, table: FromClause, batch_size: int
+    dataframe: pl.DataFrame,
+    session: Session,
+    table: FromClause,
+    batch_size: int,
+    primary_key: str,
 ):
     """
     Upsert a DataFrame into a specified SQLAlchemy table.
@@ -285,8 +289,8 @@ def df_batch_insert_to_sql(
     for start in range(0, len(dataframe), batch_size):
         end = start + batch_size
         batch = dataframe.slice(start, end)
-        batch_null = batch.filter(pl.col("id").is_null()).drop(["id"])
-        batch_id = batch.filter(pl.col("id").is_not_null())
+        batch_null = batch.filter(pl.col(primary_key).is_null()).drop([primary_key])
+        batch_id = batch.filter(pl.col(primary_key).is_not_null())
         print(batch_null.to_dicts() + batch_id.to_dicts())
         data = batch_null.to_dicts() + batch_id.to_dicts()
         print(data)
@@ -296,7 +300,7 @@ def df_batch_insert_to_sql(
 
             # Define the update action on conflict
             stmt = stmt.on_conflict_do_update(
-                index_elements=["id"],  # Specify the primary key column(s)
+                index_elements=[primary_key],  # Specify the primary key column(s)
                 set_={
                     col: stmt.excluded[col] for col in data[0].keys()
                 },  # Update all columns

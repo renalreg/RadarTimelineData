@@ -72,10 +72,14 @@ def main(
 
     transplant_run(audit_writer, sessions, radar_patient_id_map)
 
+    audit_writer.add_text("end of script")
+
     # send to database
     # close the sessions connection
     for session in sessions.values():
         session.close()
+
+
 
 
 if __name__ == "__main__":

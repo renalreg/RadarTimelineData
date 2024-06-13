@@ -1,8 +1,12 @@
 import polars as pl
+import radar_models.radar2
 from sqlalchemy.orm import Session
 
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
-from radar_timeline_data.utils.connections import sessions_to_transplant_dfs
+from radar_timeline_data.utils.connections import (
+    sessions_to_transplant_dfs,
+    df_batch_insert_to_sql,
+)
 from radar_timeline_data.utils.transplant_utils import (
     get_rr_transplant_modality,
     convert_transplant_unit,
@@ -194,8 +198,25 @@ def transplant_run(
         raise ValueError("patient_id")
 
     # =====================< WRITE TO DATABASE >==================
+    if commit:
+        total_rows,failed_rows=df_batch_insert_to_sql(
+            combine_df, sessions["radar"], radar_models.radar2.Transplant.__table__, 1000, "id"
+        )
+        audit_writer.add_text(f"{total_rows} rows of transplant data added or modified")
 
-    # TODO check that rr ids are in radar by querying
+        if len(failed_rows) > 0:
+            temp = pl.from_dicts(failed_rows)
+            audit_writer.set_ws("errors")
+            audit_writer.add_table(
+                f"{len(failed_rows)} rows of transplant data failed",
+                temp,
+                "failed_transplant_rows",
+            )
+            audit_writer.add_important(
+                f"{len(failed_rows)} rows of treatment data insert failed", True
+            )
+
+
 
 
 def group_and_reduce_transplant_rr(
