@@ -199,8 +199,12 @@ def transplant_run(
 
     # =====================< WRITE TO DATABASE >==================
     if commit:
-        total_rows,failed_rows=df_batch_insert_to_sql(
-            combine_df, sessions["radar"], radar_models.radar2.Transplant.__table__, 1000, "id"
+        total_rows, failed_rows = df_batch_insert_to_sql(
+            combine_df,
+            sessions["radar"],
+            radar_models.radar2.Transplant.__table__,
+            1000,
+            "id",
         )
         audit_writer.add_text(f"{total_rows} rows of transplant data added or modified")
 
@@ -215,8 +219,6 @@ def transplant_run(
             audit_writer.add_important(
                 f"{len(failed_rows)} rows of treatment data insert failed", True
             )
-
-
 
 
 def group_and_reduce_transplant_rr(

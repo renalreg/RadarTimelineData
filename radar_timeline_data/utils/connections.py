@@ -217,7 +217,7 @@ def sessions_to_transplant_dfs(
     return df_collection
 
 
-def get_modality_codes(sessions: dict[str, Session]) -> pl.DataFrame:
+def get_modality_codes(session: Session) -> pl.DataFrame:
     """
     Retrieve modality codes and their equivalent modalities.
 
@@ -231,7 +231,7 @@ def get_modality_codes(sessions: dict[str, Session]) -> pl.DataFrame:
     query = select(
         ukrdc.ModalityCodes.registry_code, ukrdc.ModalityCodes.equiv_modality
     )
-    return get_data_as_df(sessions["ukrdc"], query).drop_nulls()
+    return get_data_as_df(session, query).drop_nulls()
 
 
 def get_sattelite_map(session: Session) -> pl.DataFrame:

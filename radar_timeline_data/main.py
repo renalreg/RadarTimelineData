@@ -39,36 +39,40 @@ def main(
 
     # =======================< START >====================
 
-    audit_writer.add_text("starting script", style="Heading 4")
+    audit_writer.add_text("starting script", style="Heading 3")
     sessions = create_sessions()
 
-    codes = get_modality_codes(sessions)
+    codes = get_modality_codes(sessions["ukrdc"])
     satellite = get_sattelite_map(sessions["ukrdc"])
 
     radar_patient_id_map = make_patient_map(sessions)
     # write tables to audit
     audit_writer.set_ws(worksheet_name="mappings")
     audit_writer.add_table(
-        text="Modality Codes:", table=codes, table_name="Modality_Codes"
+        text="retrieved modality codes from ukrdc \u2192 ",
+        table=codes,
+        table_name="Modality_Codes",
     )
     audit_writer.add_table(
-        text="Satellite Units:", table=satellite, table_name="Satellite_Units"
+        text="retrieved modality codes from ukrdc \u2192 ",
+        table=satellite,
+        table_name="Satellite_Units",
     )
 
     audit_writer.add_table(
-        text="Patient number mapping:",
+        text="created a map of patients from each database \u2192",
         table=radar_patient_id_map,
         table_name="Patient_number",
     )
 
     # =======================< TRANSPLANT AND TREATMENT RUNS >====================
-    audit_writer.add_text("Starting Treatment Run", "Heading 3")
+    audit_writer.add_text("Treatment Process", "Heading 3")
     treatment_run(
         audit_writer, codes, satellite, sessions, radar_patient_id_map, commit
     )
     del codes
 
-    audit_writer.add_text("Starting Transplant Run", "Heading 3")
+    audit_writer.add_text("Transplant Process", "Heading 3")
 
     transplant_run(audit_writer, sessions, radar_patient_id_map)
 
@@ -78,8 +82,6 @@ def main(
     # close the sessions connection
     for session in sessions.values():
         session.close()
-
-
 
 
 if __name__ == "__main__":

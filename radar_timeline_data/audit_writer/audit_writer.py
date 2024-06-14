@@ -12,7 +12,7 @@ from docx.enum.text import (
     WD_COLOR_INDEX,
     WD_ALIGN_PARAGRAPH,
 )
-from docx.oxml import parse_xml
+from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor, Inches
 from docx.text.paragraph import Paragraph
@@ -20,38 +20,7 @@ from docx.text.run import Run
 from loguru import logger
 from openpyxl.utils import get_column_letter
 
-table_styles = [
-    "Table Style Medium 1",
-    "Table Style Medium 2",
-    "Table Style Medium 3",
-    "Table Style Medium 4",
-    "Table Style Medium 5",
-    "Table Style Medium 6",
-    "Table Style Medium 7",
-    "Table Style Medium 8",
-    "Table Style Medium 9",
-    "Table Style Light 1",
-    "Table Style Light 2",
-    "Table Style Light 3",
-    "Table Style Light 4",
-    "Table Style Light 5",
-    "Table Style Light 6",
-    "Table Style Light 7",
-    "Table Style Light 8",
-    "Table Style Light 9",
-    "Table Style Light 10",
-    "Table Style Light 11",
-    "Table Style Dark 1",
-    "Table Style Dark 2",
-    "Table Style Dark 3",
-    "Table Style Dark 4",
-    "Table Style Dark 5",
-    "Table Style Dark 6",
-    "Table Style Dark 7",
-    "Table Style Dark 8",
-    "Table Style Dark 9",
-    "Table Style Dark 10",
-]
+from radar_timeline_data.audit_writer.stylesheet import stylesheet, table_styles
 
 
 class AuditWriter:
@@ -98,14 +67,15 @@ class AuditWriter:
         self.document = Document()
 
         # set style
-        self.stylesheet = self.__stylesheet()
+        self.stylesheet = stylesheet
         self.__style()
 
         # add heading
-        self.document.add_heading(f"Audit {filename}", 0)
+        para = self.document.add_heading(f"Audit {filename}", 0)
+        self.add_paragraph_border(para, ["bottom"])
         # add process sub heading
-        self.document.add_paragraph("Proccess", style="Heading 1")
-
+        para = self.document.add_paragraph("Proccess", style="Heading 1")
+        self.add_paragraph_border(para, ["bottom"])
         # for top breakdown
         self.__include_breakdown = include_breakdown
         if include_breakdown:
@@ -125,7 +95,41 @@ class AuditWriter:
         # select logger object
         self.__logger = logger if include_logger else StubObject()
 
-    def add_change(self, description: str, old: Any, new: Any):
+    def __style(self):
+        """
+        Applies the styles from the stylesheet to the document.
+        """
+        for style_name, style_attributes in self.stylesheet.items():
+            if style_name in self.document.styles:
+                style = self.document.styles[style_name]
+            else:
+                if style_name in ["Symbol"]:
+                    style = self.document.styles.add_style(
+                        style_name, docx.enum.style.WD_STYLE_TYPE.CHARACTER
+                    )
+                else:
+                    style = self.document.styles.add_style(
+                        style_name, docx.enum.style.WD_STYLE_TYPE.PARAGRAPH
+                    )
+
+            font = style.font
+            if style_name == "Title" or "Heading" in style_name:
+                style.element.rPr.rFonts.set(
+                    qn("w:asciiTheme"), style_attributes.get("font", "Times New Roman")
+                )
+            else:
+                font.name = style_attributes.get("font", "Times New Roman")
+            font.size = style_attributes.get("size", Pt(12))
+            font.bold = style_attributes.get("bold", False)
+            font.color.rgb = style_attributes.get("color", RGBColor(0, 0, 0))
+
+            if style_name not in ["Symbol"]:
+                paragraph_format = style.paragraph_format
+                paragraph_format.alignment = style_attributes.get(
+                    "alignment", WD_ALIGN_PARAGRAPH.LEFT
+                )
+
+    def add_change(self, description: str, changes: list[Any]):
         """
         Adds a change description along with old and new data representations to the document.
 
@@ -139,27 +143,24 @@ class AuditWriter:
         """
 
         # description of the change
-        para = self.document.add_paragraph(description)
-        para.style = "List Bullet"
-
+        self.document.add_paragraph(f"{description}  ")
+        para = self.document.add_paragraph()
         # if change is a dataframe
-        if isinstance(old, pl.DataFrame) and isinstance(new, pl.DataFrame):
-            self.add_table_snippets(old)
-            para = self.document.add_paragraph()
-            para.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = para.add_run("\u21A7")
-            run.font.size = Pt(20)
-            self.add_table_snippets(new)
-
-        # if change is an object
-        elif isinstance(old, list) and isinstance(new, list):
-            para = self.document.add_paragraph()
-            para.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            para.add_run(str(old) + "\n")
-            run = para.add_run("\u21A7 \n")
-            run.font.size = Pt(20)
-            para.add_run(str(new) + "\n")
-
+        for index, change in enumerate(changes):
+            # TODO improve
+            if isinstance(change, pl.DataFrame):
+                if index != 0:
+                    para = self.document.add_paragraph()
+                    para.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    run = para.add_run("\u21A7")
+                    run.style = self.document.styles["Symbol"]
+                self.add_table_snippets(change)
+            elif isinstance(change, list):
+                para.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                if index != 0:
+                    run = para.add_run(" \u2192 ")
+                    run.style = self.document.styles["Symbol"]
+                para.add_run(f"{str(change)} ")
         # log change
         self.__logger.info(description)
 
@@ -183,7 +184,7 @@ class AuditWriter:
         new_run = docx.oxml.shared.OxmlElement("w:r")
         rPr = docx.oxml.shared.OxmlElement("w:rPr")
         new_run.append(rPr)
-        new_run.text = text
+        new_run.text = text.replace("_", " ")
         hyperlink.append(new_run)
 
         r = paragraph.add_run()
@@ -194,7 +195,7 @@ class AuditWriter:
         r.font.color.rgb = (
             self.stylesheet.get("Link").get("color") if color else RGBColor(255, 0, 0)
         )
-        r.font.underline = True
+        r.font.underline = False
 
         return hyperlink
 
@@ -311,48 +312,13 @@ class AuditWriter:
         # self.__set_paragraph_spacing(para, 0, 0)
         if style:
             para.style = style
+            if "Heading" in style:
+                self.add_paragraph_border(para)
 
         para.paragraph_format.left_indent = Inches(0.25)
+        para.paragraph_format
         self.__logger.info(text)
         # para.paragraph_format.right_indent = Inches(0.25)
-
-    def __stylesheet(self):
-        body_font = "Cascadia Code"
-        body_color = RGBColor(0, 0, 0)
-        heading_color = RGBColor(0, 0, 0)
-        link_color = RGBColor(255, 0, 255)
-        style_config = {
-            "Normal": {"font": body_font, "color": body_color},
-            "Title": {"font": body_font, "color": body_color},
-            "Link": {
-                "color": link_color,
-            },
-        }
-
-        # Generate headings from 1 to 9
-        for i in range(1, 10):
-            heading_key = f"Heading {i}"
-            style_config[heading_key] = {"font": body_font, "color": heading_color}
-
-        return style_config
-
-    def __style(self):
-        # access documents styles
-        styles = self.document.styles
-        css = self.stylesheet
-
-        for element in css:
-            if element in styles:
-                style = styles[element]
-                font = css[element].get("font")
-                color = css[element].get("color")
-                if font:
-                    if element == "Title" or "Heading" in element:
-                        style.element.rPr.rFonts.set(qn("w:asciiTheme"), font)
-                    else:
-                        style.font.name = font
-                if color:
-                    style.font.color.rgb = color
 
     def add_top_breakdown(self):
         """
@@ -397,6 +363,34 @@ class AuditWriter:
         """
         paragraph.paragraph_format.space_before = space_before
         paragraph.paragraph_format.space_after = space_after
+
+    @staticmethod
+    def add_paragraph_border(paragraph, border_override: list[str] = None):
+        # Get the XML of the paragraph
+        p = paragraph._element
+
+        # Create a new element for paragraph borders
+        pPr = p.find(qn("w:pPr"))
+        if pPr is None:
+            pPr = OxmlElement("w:pPr")
+            p.insert(0, pPr)
+
+        # Create the border element
+        pBdr = OxmlElement("w:pBdr")
+
+        # Define each side of the border
+        for border_position in (
+            border_override if border_override else ["top", "bottom"]
+        ):
+            border = OxmlElement(f"w:{border_position}")
+            border.set(qn("w:val"), "single")
+            border.set(qn("w:sz"), "10")  # Size of the border
+            border.set(qn("w:space"), "1")
+            border.set(qn("w:color"), "000000")  # Black color
+            pBdr.append(border)
+
+        # Append the border element to the paragraph properties
+        pPr.append(pBdr)
 
     def commit_audit(self):
         """

@@ -46,27 +46,30 @@ def treatment_run(
     )
 
     audit_writer.add_text("importing Treatment data from:")
-    audit_writer.set_ws(worksheet_name="import")
+    audit_writer.set_ws(worksheet_name="treatment_import")
     audit_writer.add_table(
         text="  UKRDC", table=df_collection["ukrdc"], table_name="treatment_ukrdc"
     )
     audit_writer.add_table(
         text="  RADAR", table=df_collection["radar"], table_name="treatment_radar"
     )
-    cols = df_collection["ukrdc"].columns
-    a = df_collection["ukrdc"]
+    cols = df_collection["ukrdc"].head()
     source_group_id_mapping = get_source_group_id_mapping(sessions["radar"])
 
     # =====================< Formatting >==================
 
     df_collection = format_treatment(
-        codes, df_collection, satellite, source_group_id_mapping, radar_patient_id_map
+        codes,
+        df_collection,
+        satellite,
+        source_group_id_mapping,
+        radar_patient_id_map,
+        audit_writer,
     )
 
     audit_writer.add_change(
-        description="converting ukrdc into common formats, includes patient numbers and modality codes ",
-        old=cols,
-        new=df_collection["ukrdc"].columns,
+        "converting ukrdc into common formats, includes patient numbers and modality codes ",
+        [cols, df_collection["ukrdc"].head()],
     )
     audit_writer.add_table(
         text="ukrdc format conversion",
@@ -135,17 +138,23 @@ def treatment_run(
         text="data to update", table=existing_treatments, table_name="update_Treatment"
     )
 
-    # =====================< WRITE TO DATABASE >==================
-
-    new_treatments = new_treatments.slice(0, 1)
-    new_treatments = new_treatments.drop(
-        ["source_type", "id", "created_user_id", "modified_user_id", "recent_date"]
-    ).with_columns(
-        pl.lit(None).alias("id"),
-        pl.lit("DEL").alias("source_type"),
-        pl.lit(999).alias("created_user_id"),
-        pl.lit(100).alias("modified_user_id"),
+    audit_writer.add_info(
+        "treatments out",
+        (
+            "total to update/create:",
+            str(len(new_treatments) + len(existing_treatments)),
+        ),
     )
+    audit_writer.add_info(
+        "treatments out",
+        ("total transplants to update", str(len(existing_treatments))),
+    )
+    audit_writer.add_info(
+        "treatments out",
+        ("total transplants to create", str(len(new_treatments))),
+    )
+
+    # =====================< WRITE TO DATABASE >==================
     if commit:
         total_rows, failed_rows = df_batch_insert_to_sql(
             new_treatments, sessions["radar"], radar2.Dialysi.__table__, 1000, "id"
