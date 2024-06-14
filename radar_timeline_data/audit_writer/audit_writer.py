@@ -7,20 +7,24 @@ import docx
 import polars as pl
 import xlsxwriter
 from docx import Document
-from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 from docx.enum.text import (
     WD_COLOR_INDEX,
     WD_ALIGN_PARAGRAPH,
 )
 from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor, Inches
+from docx.shared import Pt, RGBColor, Inches, Cm, Mm
 from docx.text.paragraph import Paragraph
 from docx.text.run import Run
 from loguru import logger
 from openpyxl.utils import get_column_letter
 
-from radar_timeline_data.audit_writer.stylesheet import stylesheet, table_styles
+from radar_timeline_data.audit_writer.stylesheet import (
+    stylesheet,
+    table_styles,
+    page_color,
+)
 
 
 class AuditWriter:
@@ -65,6 +69,12 @@ class AuditWriter:
         self.directory = directory
         self.filename = filename
         self.document = Document()
+        # Access the first section of the document
+        section = self.document.sections[0]
+
+        # Set page size to A4
+        section.page_height = Mm(297)
+        section.page_width = Mm(210)
 
         # set style
         self.stylesheet = stylesheet
@@ -130,37 +140,39 @@ class AuditWriter:
                 )
 
     def add_change(self, description: str, changes: list[Any]):
-        """
-        Adds a change description along with old and new data representations to the document.
-
-        Args:
-            description (str): Description of the change.
-            old (Any): Old data representation.
-            new (Any): New data representation.
-
-        Returns:
-            None
-        """
-
         # description of the change
+
+        total_length = 0
+        for change in changes:
+            if isinstance(change, list):
+                for item in change:
+                    if isinstance(item, str):
+                        total_length += len(item)
+                    else:
+                        return
+            elif isinstance(change, str):
+                total_length += len(change)
+            elif isinstance(change, pl.DataFrame):
+                total_length += sum(len(col) for col in change.columns)
+            else:
+                return
+
         self.document.add_paragraph(f"{description}  ")
         para = self.document.add_paragraph()
-        # if change is a dataframe
-        for index, change in enumerate(changes):
-            # TODO improve
-            if isinstance(change, pl.DataFrame):
-                if index != 0:
-                    para = self.document.add_paragraph()
-                    para.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    run = para.add_run("\u21A7")
-                    run.style = self.document.styles["Symbol"]
-                self.add_table_snippets(change)
-            elif isinstance(change, list):
+
+        if total_length < 60:
+            for index, change in enumerate(changes):
                 para.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 if index != 0:
                     run = para.add_run(" \u2192 ")
                     run.style = self.document.styles["Symbol"]
-                para.add_run(f"{str(change)} ")
+                if isinstance(change, pl.DataFrame):
+                    para.add_run(f"{str(change.columns)} ")
+                else:
+                    para.add_run(f"{str(change)} ")
+        else:
+            self.add_change_table(changes)
+            self.document.add_paragraph("\n")
         # log change
         self.__logger.info(description)
 
@@ -195,7 +207,7 @@ class AuditWriter:
         r.font.color.rgb = (
             self.stylesheet.get("Link").get("color") if color else RGBColor(255, 0, 0)
         )
-        r.font.underline = False
+        r.font.underline = True
 
         return hyperlink
 
@@ -300,6 +312,53 @@ class AuditWriter:
         for index, (name, data_type) in enumerate(zip(cols, table.dtypes)):
             hdr_cells[index].text = name + "\n" + str(data_type)
 
+    def add_change_table(self, changes: list[Any]):
+        if not 0 < len(changes) < 8:
+            return
+        doc_tbl = self.document.add_table(rows=1, cols=((len(changes) * 2) - 1))
+        doc_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+        doc_tbl.style = "Table Grid"
+        doc_tbl.autofit = True
+
+        tblBorders = parse_xml(
+            r'<w:tblBorders xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            r'<w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/>'
+            r'<w:insideH w:val="nil"/><w:insideV w:val="nil"/>'
+            r"</w:tblBorders>"
+        )
+        doc_tbl._tbl.tblPr.append(tblBorders)
+        hdr_cells = doc_tbl.rows[0].cells
+
+        for index, change in enumerate(changes):
+            max_length = 1
+            if index != 0:  # For every iteration apart from the first
+                arrow_cell = hdr_cells[((index * 2) - 1)]
+                arrow_cell.width = Cm(1.0)
+                arrow_cell.text = "\u2192"
+                arrow_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+                for paragraph in arrow_cell.paragraphs:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    for run in paragraph.runs:
+                        run.style = "Symbol"
+
+            cell = hdr_cells[(index * 2) if index != 0 else 0]
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            if isinstance(change, str):
+                cell.text = change
+                max_length = len(change)
+            elif isinstance(change, list) and all(
+                isinstance(item, str) for item in change
+            ):
+                cell.text = "\n".join(change)
+                max_length = len(max(change, key=len))
+            elif isinstance(change, pl.DataFrame):
+                temp = change.columns
+                cell.text = "\n".join(temp)
+                max_length = len(max(temp, key=len))
+
+            cell.width = Cm(min(round(0.42 * max_length), 5))  # Default larger width
+
     def add_text(self, text: str, style: str | None = None):
         """
         Adds text to the audit document.
@@ -313,12 +372,10 @@ class AuditWriter:
         if style:
             para.style = style
             if "Heading" in style:
-                self.add_paragraph_border(para)
+                self.add_paragraph_border(para, ["bottom"])
 
-        para.paragraph_format.left_indent = Inches(0.25)
-        para.paragraph_format
         self.__logger.info(text)
-        # para.paragraph_format.right_indent = Inches(0.25)
+        # para.paragraph_format.left_indent = Inches(0.25)
 
     def add_top_breakdown(self):
         """
@@ -392,11 +449,31 @@ class AuditWriter:
         # Append the border element to the paragraph properties
         pPr.append(pBdr)
 
+    def set_page_color(self):
+        """
+        Set the background color of all pages in a Word document.
+
+        Parameters:
+        - doc: Document object from python-docx.
+        - color: RGBColor object representing the color.
+        """
+        # Iterate through all sections in the document
+        shd = OxmlElement("w:background")
+        # Add attributes to the xml element
+        shd.set(qn("w:color"), page_color)
+        # Add background element at the start of Document.xml using below
+        self.document.element.insert(0, shd)
+        background_shp = OxmlElement(
+            "w:displayBackgroundShape"
+        )  # Setting to use my background
+        self.document.settings.element.insert(0, background_shp)  # Apply setting
+
     def commit_audit(self):
         """
         Commits the audit by adding the top breakdown, closing the workbook, and saving the document.
         """
         self.add_top_breakdown()
+        self.set_page_color()
         self.wb.close()
         self.document.save(os.path.join(self.directory, f"{self.filename}.docx"))
 
