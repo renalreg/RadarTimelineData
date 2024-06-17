@@ -1,11 +1,10 @@
+import polars as pl
 import radar_models.radar2 as radar
 import ukrdc_sqla.ukrdc as ukrdc
 import ukrr_models.rr_models as rr
 from sqlalchemy import case, select
-import polars as pl
 
 from radar_timeline_data.utils.connections import get_data_as_df
-
 
 radar_pat_query = (
     select(
@@ -58,6 +57,18 @@ def chunk_list(lst, chunk_size):
 
 
 def map_rr_to_indentifier(connection, identifier_list, identifier_type):
+    """
+    Map RR numbers to identifiers.
+
+    Args:
+        connection: Database connection.
+        identifier_list (list): List of identifiers.
+        identifier_type (str): Type of identifier.
+
+    Returns:
+        DataFrame: DataFrame with RR numbers mapped to identifiers.
+    """
+
     rr_pats = pl.DataFrame()
     for chunk in chunk_list(identifier_list, 1000):
         rr_nhs_query = select(
@@ -73,6 +84,18 @@ def map_rr_to_indentifier(connection, identifier_list, identifier_type):
 
 
 def add_rr_no_to_map(pat_map, rr_pats, identifier):
+    """
+    Add RR number to patient map.
+
+    Args:
+        pat_map (DataFrame): The patient map DataFrame.
+        rr_pats (DataFrame): DataFrame containing RR patients data.
+        identifier (str): Identifier for joining the DataFrames.
+
+    Returns:
+        DataFrame: Updated patient map with RR number added.
+    """
+
     pat_map = pat_map.join(
         rr_pats.select([identifier, "rr_no"]), on=identifier, how="left"
     )

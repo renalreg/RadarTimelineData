@@ -4,7 +4,6 @@ from typing import List
 import polars as pl
 
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
-from radar_timeline_data.utils.polar_utils import max_with_nulls
 
 
 def column_name_and_type_change(
@@ -487,3 +486,7 @@ def format_treatment(
         }
     )
     return df_collection
+
+
+def max_with_nulls(column: pl.Expr) -> pl.Expr:
+    return column.sort(descending=True, nulls_last=False).first()

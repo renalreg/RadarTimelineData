@@ -178,7 +178,7 @@ def sessions_to_transplant_dfs(
 
     """
 
-    # Extract data for "radar" session
+    # Extract data for "radar" session convert id to string for polars to work
 
     radar_query = select(
         cast(radar.Transplant.id, String).label("id_str"),
@@ -189,6 +189,8 @@ def sessions_to_transplant_dfs(
         .drop(columns="id")
         .rename({"id_str": "id"})
     }
+
+    # Extract data for "rr" session with filter
     in_clause = rr_filter.to_list()
 
     rr_query = select(

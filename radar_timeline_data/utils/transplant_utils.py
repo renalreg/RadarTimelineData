@@ -61,6 +61,7 @@ def get_rr_transplant_modality(rr_df: pl.DataFrame) -> pl.DataFrame:
         .otherwise(None)
         .alias("modality")
     ).cast({"modality": pl.Int64})
+    print(rr_df.filter(pl.col("modality").is_null()))
     return rr_df
 
 
