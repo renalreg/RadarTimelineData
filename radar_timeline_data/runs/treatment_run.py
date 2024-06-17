@@ -27,14 +27,18 @@ def treatment_run(
     commit: bool = False,
 ) -> None:
     """
-    function that controls the flow of treatment rows/data
+    Runs the treatment data processing pipeline.
+
     Args:
-        audit_writer: AuditWriter Object or Stub object for writing dataflow in readable formats
-        codes: map of modality codes and their corresponding equivalent
-        satellite: map of satellites and main units
-        sessions: dictionary of sessions must contain "ukrdc" and "radar"
-        radar_patient_id_map: map of ukrdc localpatientid to radar patient_id
-        commit: flag to allow for data to be committed
+        audit_writer: An AuditWriter or StubObject instance for logging.
+        codes: DataFrame containing treatment codes.
+        satellite: DataFrame containing satellite data.
+        sessions: Dictionary of Session objects.
+        radar_patient_id_map: DataFrame mapping radar patient IDs.
+        commit: Flag indicating whether to commit data to the database.
+
+    Returns:
+        None
     """
 
     # =====================< GET TREATMENTS >==================
@@ -45,7 +49,7 @@ def treatment_run(
         ),
     )
 
-    audit_writer.add_text("importing Treatment data from:")
+    audit_writer.add_text("Importing Treatment data from:")
     audit_writer.set_ws(worksheet_name="treatment_import")
     audit_writer.add_table(
         text="  UKRDC", table=df_collection["ukrdc"], table_name="treatment_ukrdc"
@@ -68,11 +72,11 @@ def treatment_run(
     )
 
     audit_writer.add_change(
-        "converting ukrdc into common formats, includes patient numbers and modality codes ",
+        "Converting ukrdc into common formats, includes patient numbers and modality codes ",
         [cols, df_collection["ukrdc"].head()],
     )
     audit_writer.add_table(
-        text="ukrdc format conversion",
+        text="UKRDC treatments in RADAR format",
         table=df_collection["ukrdc"],
         table_name="format_ukrdc",
     )
@@ -81,6 +85,9 @@ def treatment_run(
 
     # =====================< REDUCE >==================
 
+    audit_writer.add_text(
+        "After formatting treatments in radar format similar treatments need to be Aggregated"
+    )
     audit_writer.set_ws("group_reduce_Treatment")
     df_collection["ukrdc"] = group_and_reduce_ukrdc_dataframe(
         df_collection, audit_writer
@@ -93,7 +100,7 @@ def treatment_run(
 
     audit_writer.set_ws("raw_all_Treatment")
     audit_writer.add_table(
-        text="combine dataframes",
+        text="Combine data from UKRDC and RADAR",
         table=combined_dataframe,
         table_name="raw_combined_Treatment",
     )
@@ -104,6 +111,9 @@ def treatment_run(
     del df_collection
 
     audit_writer.set_ws("group_reduce_all_Treatment")
+    audit_writer.add_text(
+        "The data is now consolidated into one table and requires grouping and aggregation."
+    )
 
     # =====================< REDUCE >==================
 
@@ -112,7 +122,7 @@ def treatment_run(
         combined_dataframe
     )
     audit_writer.add_table(
-        "reducing_combined_Treatment",
+        "All treatments have been grouped and reduced",
         reduced_dataframe,
         table_name="reduced_combined_Treatment",
     )
@@ -156,6 +166,7 @@ def treatment_run(
 
     # =====================< WRITE TO DATABASE >==================
     if commit:
+        audit_writer.add_text("Starting data commit.")
         total_rows, failed_rows = df_batch_insert_to_sql(
             new_treatments, sessions["radar"], radar2.Dialysi.__table__, 1000, "id"
         )

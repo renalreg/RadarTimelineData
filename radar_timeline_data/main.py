@@ -49,18 +49,18 @@ def main(
     # write tables to audit
     audit_writer.set_ws(worksheet_name="mappings")
     audit_writer.add_table(
-        text="retrieved modality codes from ukrdc \u2192 ",
+        text="retrieved modality codes from ukrdc",
         table=codes,
         table_name="Modality_Codes",
     )
     audit_writer.add_table(
-        text="retrieved modality codes from ukrdc \u2192 ",
+        text="retrieved unit codes from ukrdc",
         table=satellite,
         table_name="Satellite_Units",
     )
 
     audit_writer.add_table(
-        text="created a map of patients from each database \u2192",
+        text="created a map of patients from each database",
         table=radar_patient_id_map,
         table_name="Patient_number",
     )
@@ -88,9 +88,14 @@ if __name__ == "__main__":
     logger.info("script start")
     args = get_args()
 
+    start_time = datetime.now()
     audit: AuditWriter | StubObject = (
         AuditWriter(
-            f"{args.audit}", "delta", include_excel=True, include_breakdown=True
+            f"{args.audit}",
+            f"rdrTimeLineDataLog-{start_time.strftime('%d-%m-%Y')}",
+            "Radar Timeline Data Log",
+            include_excel=True,
+            include_breakdown=True,
         )
         if args.audit
         else StubObject()
@@ -106,11 +111,16 @@ if __name__ == "__main__":
         logger.info(f"Auditing directory: {args.audit}")
 
     # Recording start time
-    start_time = datetime.now()
+
     audit.add_info("time", ("start time", start_time.strftime("%Y-%m-%d %H:%M")))
 
     # Calling main function
-    main(**params)
+    try:
+        main(**params)
+    except Exception as e:
+        audit.add_important("{e}", True)
+        audit.commit_audit()
+        raise e
 
     # Recording end time
     end_time = datetime.now()

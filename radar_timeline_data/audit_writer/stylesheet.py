@@ -9,7 +9,7 @@ heading_color = RGBColor(14, 1, 36)
 primary_color = RGBColor(237, 25, 32)
 secondary_color = RGBColor(119, 213, 244)
 accent_color = RGBColor(136, 79, 241)
-page_color = "FFEAE2"
+page_color = "FFFFFF"
 # Define the stylesheet
 stylesheet = {
     "Title": {

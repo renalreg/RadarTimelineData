@@ -56,11 +56,12 @@ def group_and_reduce_ukrdc_dataframe(
         df_collection["ukrdc"], ["patient_id", "modality"]
     )
     audit_writer.add_table(
-        "grouping similar or overlapping date of subsection patient_id and modality",
+        "Grouping treatments by modality and patient ID, "
+        "where each treatment within a group overlaps or is within 5 days of another",
         df_collection["ukrdc"],
         "date_range_over_patient_id_modality_ukrdc",
     )
-    # TODO ask david about this part
+    # TODO ask david about this part may not be needed as modality grouping will cover this
     # get min and max dates for recent date to get most up to date row
     df_collection["ukrdc"] = df_collection["ukrdc"].with_columns(
         pl.max_horizontal(["created_date", "modified_date"]).alias("recent_date")
@@ -85,7 +86,7 @@ def group_and_reduce_ukrdc_dataframe(
     )
 
     audit_writer.add_table(
-        "reduce ukrdc by grouped ranges",
+        "Reducing treatments by selecting representative values from each group",
         df_collection["ukrdc"],
         "date_range_over_patient_id_modality_reduced_ukrdc",
     )
@@ -97,7 +98,8 @@ def group_and_reduce_ukrdc_dataframe(
     )
 
     audit_writer.add_table(
-        "grouping similiar or overlapping date ranges of subsection patient_id to check that no treatments overlap",
+        "Re Grouping treatments by patient ID, "
+        "where each treatment within a group overlaps or is within 15 days of another effectively combining modalities",
         df_collection["ukrdc"],
         "date_range_over_patient_id_ukrdc",
     )
@@ -126,7 +128,7 @@ def group_and_reduce_ukrdc_dataframe(
     )
 
     audit_writer.add_table(
-        "reduce",
+        "Reducing treatments by selecting representative values from each group",
         df_collection["ukrdc"],
         "date_range_over_patient_id_reduced_ukrdc",
     )

@@ -51,6 +51,7 @@ class AuditWriter:
         self,
         directory: str,
         filename: str,
+        document_title: str,
         include_excel: bool = True,
         include_breakdown: bool = True,
         include_logger: bool = True,
@@ -75,6 +76,8 @@ class AuditWriter:
         # Set page size to A4
         section.page_height = Mm(297)
         section.page_width = Mm(210)
+
+        self.add_watermark()
 
         # set style
         self.stylesheet = stylesheet
@@ -112,15 +115,14 @@ class AuditWriter:
         for style_name, style_attributes in self.stylesheet.items():
             if style_name in self.document.styles:
                 style = self.document.styles[style_name]
+            elif style_name in ["Symbol"]:
+                style = self.document.styles.add_style(
+                    style_name, docx.enum.style.WD_STYLE_TYPE.CHARACTER
+                )
             else:
-                if style_name in ["Symbol"]:
-                    style = self.document.styles.add_style(
-                        style_name, docx.enum.style.WD_STYLE_TYPE.CHARACTER
-                    )
-                else:
-                    style = self.document.styles.add_style(
-                        style_name, docx.enum.style.WD_STYLE_TYPE.PARAGRAPH
-                    )
+                style = self.document.styles.add_style(
+                    style_name, docx.enum.style.WD_STYLE_TYPE.PARAGRAPH
+                )
 
             font = style.font
             if style_name == "Title" or "Heading" in style_name:
@@ -138,6 +140,35 @@ class AuditWriter:
                 paragraph_format.alignment = style_attributes.get(
                     "alignment", WD_ALIGN_PARAGRAPH.LEFT
                 )
+
+    def add_watermark(self, watermark_path: str = None):
+        if not watermark_path:
+            script_dir = os.path.dirname(__file__)
+            # Construct the full path to the file
+            print(script_dir)
+            watermark_path = os.path.join(script_dir, "img/watermark.png")
+            print(watermark_path)
+
+        # Open the document footer for editing
+        section = self.document.sections[0]
+        footer = section.footer
+
+        # Create a paragraph and add image to it
+        paragraph = (
+            footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+        )
+        run = paragraph.add_run()
+        run.add_picture(watermark_path, width=Inches(1))  # Adjust width as necessary
+
+        # Center align the paragraph
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # Set the image as behind text
+        shape = run._element.getparent()
+        shape._inline = None  # Make the shape floating
+        shape.wrap = True
+        shape.width = Inches(1)  # Adjust width as necessary
+        shape.height = Inches(1)  # Adjust height as necessary
 
     def add_change(self, description: str, changes: list[Any]):
         # description of the change
@@ -159,6 +190,7 @@ class AuditWriter:
 
         self.document.add_paragraph(f"{description}  ")
         para = self.document.add_paragraph()
+        # self.__set_paragraph_spacing(para, 0, 0)
 
         if total_length < 60:
             for index, change in enumerate(changes):
@@ -265,8 +297,8 @@ class AuditWriter:
         - table_name (str): The name of the table must not contain spaces.
         """
         if self.__include_excel:
-            para = self.document.add_paragraph(f"{text} ")
-            para.paragraph_format.left_indent = Inches(0.25)
+            para = self.document.add_paragraph(f"{text} \u2192 ")
+            # self.__set_paragraph_spacing(para, 0, 0)
             table_name = table_name.strip()
             self.add_hyperlink(
                 para,
@@ -368,7 +400,7 @@ class AuditWriter:
         """
 
         para = self.document.add_paragraph(text)
-        # self.__set_paragraph_spacing(para, 0, 0)
+
         if style:
             para.style = style
             if "Heading" in style:
@@ -474,6 +506,7 @@ class AuditWriter:
         """
         self.add_top_breakdown()
         self.set_page_color()
+
         self.wb.close()
         self.document.save(os.path.join(self.directory, f"{self.filename}.docx"))
 

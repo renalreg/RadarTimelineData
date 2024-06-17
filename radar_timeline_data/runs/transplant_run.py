@@ -56,50 +56,53 @@ def transplant_run(
     audit_writer.set_ws("import_transplant_run")
     for key, value in df_collection.items():
         audit_writer.add_table(
-            text=f"import table {key}",
+            text=f"Imported {key} transplants  \u2192 ",
             table=value,
             table_name=f"raw_transplant_{key}",
         )
 
     # =====================<FORMAT DATA>==================
-    audit_writer.add_text("formatting transplant data")
+    audit_writer.add_text(
+        "Converting RR transplants into common formats, includes patient numbers and modality codes "
+    )
 
     df_collection = format_transplant(df_collection, radar_patient_id_map, sessions)
 
     audit_writer.set_ws("transplant_format")
-    audit_writer.add_table("format changes", df_collection["rr"], "format_rr_table")
+    audit_writer.add_table(
+        "RR transplants with radar format  \u2192 ",
+        df_collection["rr"],
+        "format_rr_table",
+    )
 
     # =====================<GROUP AND REDUCE>==================
-    audit_writer.add_text("Group and Reduce")
+    audit_writer.add_text("Grouping and Reducing RR transplants")
     audit_writer.set_ws("reduced")
 
     df_collection = group_and_reduce_transplant_rr(audit_writer, df_collection)
-
+    audit_writer.add_table(
+        "reduced RR transplants", df_collection["rr"], "reduced_rr_transplants"
+    )
     # =====================< COMBINE RADAR & RR >==================
 
-    audit_writer.add_text("merging transplants data")
+    audit_writer.add_text("Transplants in RR and RADAR are merged")
     audit_writer.set_ws("transplant_merge")
-    audit_writer.add_table(
-        "rr transplants before merge", df_collection["rr"], "unmerged_rr_transplants"
-    )
-    audit_writer.add_table(
-        "radar transplants before merge",
-        df_collection["radar"],
-        "unmerged_radar_transplants",
-    )
-
-    combine_df = pl.concat(
+    all_transplants = pl.concat(
         [df_collection["radar"], df_collection["rr"]], how="diagonal_relaxed"
     )
-
-    audit_writer.add_table("transplants after merge", combine_df, "merged_transplants")
+    audit_writer.add_table(
+        "transplants after merge", all_transplants, "merged_transplants"
+    )
 
     # =====================< GROUP AND REDUCE >==================
-    audit_writer.add_text("grouping and reducing merged transplants")
+    audit_writer.add_text(
+        "Grouping and Reducing all Transplants by grouping overlapping transplants within 5 days, "
+        "prioritising data sources and aggregating essential patient and group information"
+    )
     # list of current columns
-    cols = combine_df.columns
+    cols = all_transplants.columns
     # shift columns
-    combine_df = (combine_df.sort("patient_id", "date")).with_columns(
+    all_transplants = (all_transplants.sort("patient_id", "date")).with_columns(
         pl.col(col_name).shift().over("patient_id").alias(f"{col_name}_shifted")
         for col_name in cols
     )
@@ -107,15 +110,15 @@ def transplant_run(
     # date mask to define overlapping transplants
     mask = abs(pl.col("date") - pl.col("date_shifted")) <= pl.duration(days=5)
     # group using the mask and perform a 'run length encoding'
-    combine_df = combine_df.with_columns(
+    all_transplants = all_transplants.with_columns(
         pl.when(mask).then(0).otherwise(1).over("patient_id").alias("group_id")
     )
-    combine_df = combine_df.with_columns(
+    all_transplants = all_transplants.with_columns(
         pl.col("group_id").cumsum().rle_id().over("patient_id").alias("group_id")
     )
 
     # convert source types into priority numbers
-    combine_df = combine_df.with_columns(
+    all_transplants = all_transplants.with_columns(
         pl.col("source_type")
         .replace(
             old=["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"],
@@ -125,12 +128,12 @@ def transplant_run(
         .cast(pl.Int32)
     )
     # sort data in regard to source priority
-    combine_df = combine_df.sort(
+    all_transplants = all_transplants.sort(
         "patient_id", "group_id", "source_type", descending=True
     )
     # group data and aggregate first non-null id and first of other columns per patient and group
-    combine_df = (
-        combine_df.groupby(["patient_id", "group_id"])
+    all_transplants = (
+        all_transplants.groupby(["patient_id", "group_id"])
         .agg(
             pl.col("id").drop_nulls().first(),
             **{
@@ -143,7 +146,7 @@ def transplant_run(
     )
 
     # convert source_type back to correct format
-    combine_df = combine_df.with_columns(
+    all_transplants = all_transplants.with_columns(
         pl.col("source_type")
         .cast(pl.String)
         .replace(
@@ -155,20 +158,22 @@ def transplant_run(
 
     # =====================< CHECK for Changes  >==================
 
-    new_transplant_rows = combine_df.filter(pl.col("id").is_null())
+    new_transplant_rows = all_transplants.filter(pl.col("id").is_null())
 
-    updated_transplant_rows = combine_df.filter(pl.col("id").is_not_null())
+    updated_transplant_rows = all_transplants.filter(pl.col("id").is_not_null())
 
-    audit_writer.add_table("reduced data", combine_df, "reduced_transplant_data")
+    audit_writer.add_table(
+        "reduced transplants", all_transplants, "reduced_transplant_data"
+    )
     audit_writer.set_ws("transplant_output")
     audit_writer.add_table(
         "new transplants",
-        combine_df.filter(pl.col("id").is_null()),
+        all_transplants.filter(pl.col("id").is_null()),
         "new_transplant_data",
     )
     audit_writer.add_table(
         "updated transplants",
-        combine_df.filter(pl.col("id").is_not_null()),
+        all_transplants.filter(pl.col("id").is_not_null()),
         "updated_transplant_data",
     )
 
@@ -190,17 +195,18 @@ def transplant_run(
 
     # =====================< SANITY CHECKS  >==================
 
-    if combine_df.filter(
+    if all_transplants.filter(
         ~pl.col("source_type").is_in(["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"])
     ).get_column("source_type").shape != (0,):
         raise ValueError("source_type")
-    if not combine_df.filter(pl.col("patient_id").is_null()).is_empty():
+    if not all_transplants.filter(pl.col("patient_id").is_null()).is_empty():
         raise ValueError("patient_id")
 
     # =====================< WRITE TO DATABASE >==================
     if commit:
+        audit_writer.add_text("Writing Transplant data to database")
         total_rows, failed_rows = df_batch_insert_to_sql(
-            combine_df,
+            all_transplants,
             sessions["radar"],
             radar_models.radar2.Transplant.__table__,
             1000,
@@ -248,9 +254,11 @@ def group_and_reduce_transplant_rr(
         pl.col("group_id").cumsum().rle_id().over("patient_id").alias("group_id")
     )
     audit_writer.add_table(
-        "transplants from rr grouped", df_collection["rr"], "grouped_rr"
+        "Transplants from RR grouped based on patient_id  \u2192 ",
+        df_collection["rr"],
+        "grouped_rr",
     )
-    audit_writer.add_text("reducing rr transplants data ...")
+
     df_collection["rr"] = (
         df_collection["rr"]
         .groupby(["patient_id", "group_id"])
@@ -265,7 +273,9 @@ def group_and_reduce_transplant_rr(
         .with_columns(pl.lit(None, pl.String).alias("id"))
     )
     audit_writer.add_table(
-        "reduced rr transplants :", df_collection["rr"], "reduced_rr"
+        "Transplants from RR aggregated by first values in each group, no priority given  \u2192 ",
+        df_collection["rr"],
+        "reduced_rr",
     )
     return df_collection
 
