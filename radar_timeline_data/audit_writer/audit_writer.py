@@ -84,7 +84,7 @@ class AuditWriter:
         self.__style()
 
         # add heading
-        para = self.document.add_heading(f"Audit {filename}", 0)
+        para = self.document.add_heading(f"Audit {document_title}", 0)
         self.add_paragraph_border(para, ["bottom"])
         # add process sub heading
         para = self.document.add_paragraph("Proccess", style="Heading 1")
