@@ -5,6 +5,7 @@ import ukrr_models.rr_models as rr
 from sqlalchemy import case, select
 
 from radar_timeline_data.utils.connections import get_data_as_df
+from radar_timeline_data.utils import chunk_list
 
 radar_pat_query = (
     select(
@@ -49,11 +50,6 @@ ukrdc_pat_query = (
     .filter(ukrdc.PatientNumber.organization == "RADAR")
     .order_by(ukrdc.PatientNumber.patientid)
 )
-
-
-def chunk_list(lst, chunk_size):
-    for i in range(0, len(lst), chunk_size):
-        yield lst[i : i + chunk_size]
 
 
 def map_rr_to_indentifier(connection, identifier_list, identifier_type):

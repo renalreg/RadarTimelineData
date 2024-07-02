@@ -135,3 +135,9 @@ dmypy.json
 
 # VScode
 .vscode
+
+# Datafiles
+*.docx
+*.xlsx
+*.csv
+/audit

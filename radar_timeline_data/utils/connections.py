@@ -5,16 +5,15 @@ import ukrdc_sqla.ukrdc as ukrdc
 import ukrr_models.nhsbt_models as nhsbt
 from rr_connection_manager import SQLServerConnection
 from rr_connection_manager.classes.postgres_connection import PostgresConnection
-from sqlalchemy import String, cast, FromClause
-from sqlalchemy import select
+from sqlalchemy import FromClause, String, cast, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from tenacity import (
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
 
 
@@ -38,7 +37,6 @@ def get_data_as_df(session, query) -> pl.DataFrame:
         query,
         connection=session.bind,
         schema_overrides={
-            "updatedon": pl.Datetime,
             "externalid": pl.String,
             "donor_hla": pl.String,
             "recipient_hla": pl.String,
@@ -49,7 +47,6 @@ def get_data_as_df(session, query) -> pl.DataFrame:
             "date_of_recurrence": pl.Date,
             "chi_no": pl.String,
             "hsc_no": pl.String,
-            "update_date": pl.Datetime,
             "new_nhs_no": pl.String,
             "radar_id": pl.String,
             "rr_no": pl.String,
@@ -64,20 +61,26 @@ def get_data_as_df(session, query) -> pl.DataFrame:
         (sqlalchemy.exc.TimeoutError, sqlalchemy.exc.OperationalError)
     ),
 )
-def create_sessions() -> dict[str, Session]:
+def create_sessions(test_run) -> dict[str, Session]:
     """
-
     Returns:
         dict: A dictionary containing initialized SessionManager instances for each database session.
     """
+    ukrdc_instance = "ukrdc_staging"
+    radar_instance = "radar_staging"
+
+    if not test_run:
+        ukrdc_instance = "ukrdc_live"
+        radar_instance = "radar_live"
 
     return {
         "ukrdc": PostgresConnection(
-            app="ukrdc_staging", tunnel=True, via_app=True
+            app=ukrdc_instance, tunnel=True, via_app=True
         ).session(),
         "radar": PostgresConnection(
-            app="radar_staging", tunnel=True, via_app=True
+            app=radar_instance, tunnel=True, via_app=True
         ).session(),
+        # Currently no staging server for RR
         "rr": SQLServerConnection(app="renalreg_live").session(),
     }
 
@@ -114,111 +117,6 @@ def get_database_with_multiple_filters(
     return rr_df
 
 
-def sessions_to_treatment_dfs(
-    sessions: dict[str, Session], filter: pl.Series
-) -> dict[str, pl.DataFrame]:
-    """
-    Convert sessions data into DataFrame collection holding treatments.
-
-    Args:
-        sessions (dict): A dictionary containing session information.
-        filter (pl.Series, optional):A filter of ids to pull
-
-    Returns:
-        dict: A dictionary containing DataFrames corresponding to each session.
-    """
-
-    # =======================<  GET RADAR   >====================
-
-    radar_query = select(radar.Dialysi, cast(radar.Dialysi.id, String).label("id_str"))
-
-    df_collection = {"radar": get_data_as_df(sessions["radar"], radar_query)}
-    # workaround for object type causing weird issues in schema
-    df_collection["radar"] = df_collection["radar"].drop("id").rename({"id_str": "id"})
-    # TODO filter out ids in radar that have not imported from ukrdc to avoid storing them along script life
-    # =================<  GET UKRDC  >===============
-    temp = filter.cast(pl.String).to_list()
-    # Extract data for "ukrdc" session
-    ukrdc_query = (
-        sessions["ukrdc"]
-        .query(
-            ukrdc.Treatment.id,
-            ukrdc.Treatment.pid,
-            ukrdc.Treatment.idx,
-            ukrdc.Treatment.fromtime,
-            ukrdc.Treatment.totime,
-            ukrdc.Treatment.creation_date,
-            ukrdc.Treatment.admitreasoncode,
-            ukrdc.Treatment.healthcarefacilitycode,
-            ukrdc.PatientRecord.localpatientid,
-            ukrdc.PatientRecord.ukrdcid,
-            ukrdc.Treatment.update_date,
-        )
-        .join(ukrdc.PatientRecord, ukrdc.Treatment.pid == ukrdc.PatientRecord.pid)
-        .filter(ukrdc.PatientRecord.ukrdcid.in_(temp))
-        .statement
-    )
-
-    df_collection["ukrdc"] = get_data_as_df(sessions["ukrdc"], ukrdc_query)
-
-    return df_collection
-
-
-def sessions_to_transplant_dfs(
-    sessions: dict[str, Session], rr_filter: pl.Series
-) -> dict[str, pl.DataFrame]:
-    """
-    Convert sessions data into DataFrame collection holding transplants.
-
-    Args:
-        sessions (dict): A dictionary containing session information.
-        rr_filter (pl.Series):A filter of ids to pull
-    Returns:
-        dict: A dictionary containing DataFrames corresponding to each session.
-
-    """
-
-    # Extract data for "radar" session convert id to string for polars to work
-
-    radar_query = select(
-        cast(radar.Transplant.id, String).label("id_str"),
-        radar.Transplant,
-    )
-    df_collection = {
-        "radar": get_data_as_df(sessions["radar"], radar_query)
-        .drop(columns="id")
-        .rename({"id_str": "id"})
-    }
-
-    # Extract data for "rr" session with filter
-    in_clause = rr_filter.to_list()
-
-    rr_query = select(
-        nhsbt.UKTTransplant.rr_no,
-        nhsbt.UKTTransplant.transplant_type,
-        nhsbt.UKTTransplant.transplant_organ,
-        nhsbt.UKTTransplant.transplant_date,
-        nhsbt.UKTTransplant.ukt_fail_date,
-        nhsbt.UKTTransplant.hla_mismatch,
-        nhsbt.UKTTransplant.transplant_relationship,
-        nhsbt.UKTTransplant.transplant_sex,
-        nhsbt.UKTSites.rr_code.label("TRANSPLANT_UNIT"),
-    ).join(
-        nhsbt.UKTSites,
-        nhsbt.UKTTransplant.transplant_unit == nhsbt.UKTSites.site_name,
-    )
-    df_collection["rr"] = pl.DataFrame()
-    df_collection["rr"] = get_database_with_multiple_filters(
-        [in_clause],
-        [nhsbt.UKTTransplant.rr_no],
-        df_collection["rr"],
-        sessions["rr"],
-        rr_query,
-    )
-    # df_collection["rr"] = get_data_as_df(sessions["rr"], rr_query)
-    return df_collection
-
-
 def get_modality_codes(session: Session) -> pl.DataFrame:
     """
     Retrieve modality codes and their equivalent modalities.
@@ -236,7 +134,7 @@ def get_modality_codes(session: Session) -> pl.DataFrame:
     return get_data_as_df(session, query).drop_nulls()
 
 
-def get_sattelite_map(session: Session) -> pl.DataFrame:
+def get_satellite_map(session: Session) -> pl.DataFrame:
     """
     Retrieves satellite mapping data from the database using the provided SessionManager object.
     The data includes satellite codes and their corresponding main unit codes.

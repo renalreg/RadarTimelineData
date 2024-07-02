@@ -7,7 +7,7 @@ from radar_timeline_data.utils.connections import (
     get_ukrdcid_to_radarnumber_map,
     get_modality_codes,
     sessions_to_treatment_dfs,
-    get_sattelite_map,
+    get_satellite_map,
     get_source_group_id_mapping,
 )
 
@@ -54,7 +54,7 @@ def test_get_modality_codes():
 def test_get_sattelite_map():
     """Testing if get_sattelite_map method returns a Polars DataFrame"""
     sessions = create_sessions()
-    result = get_sattelite_map(sessions["ukrdc"])
+    result = get_satellite_map(sessions["ukrdc"])
     assert isinstance(result, pl.DataFrame)
 
 
