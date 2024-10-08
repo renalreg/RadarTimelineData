@@ -113,7 +113,7 @@ def get_database_with_multiple_filters(
                 rr_df = get_data_as_df(session, query)
             else:
                 rr_df = pl.concat([rr_df, get_data_as_df(session, query)])
-    # TODO CHECK THAT CONCAT HAS ALL VALUES AND IS NOT MISSING ANY
+
     return rr_df
 
 
