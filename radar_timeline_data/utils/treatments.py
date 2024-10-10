@@ -1,20 +1,37 @@
+import datetime
+import decimal
+from _operator import or_
+from functools import reduce
+from typing import List, Optional
+
 import polars as pl
 import radar_models.radar2 as radar
 import ukrdc_sqla.ukrdc as ukrdc
-from sqlalchemy.orm import Session
-from sqlalchemy import String, Date, cast
-from typing import List
+from sqlalchemy import (
+    String,
+    Date,
+    cast,
+    Column,
+    PrimaryKeyConstraint,
+    BigInteger,
+    DateTime,
+    Unicode,
+    Numeric,
+    select,
+)
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import Session, synonym, Mapped
 
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter
 from radar_timeline_data.utils.connections import (
     df_batch_insert_to_sql,
     get_data_as_df,
 )
-
 from radar_timeline_data.utils.utils import (
     fill_null_time,
     check_nulls_in_column,
     max_with_nulls,
+    chunk_list,
 )
 
 
@@ -42,16 +59,14 @@ def treatment_run(
         None
     """
 
+    audit_writer.add_text("Treatment Process", "Heading 3")
+
     df_collection = make_treatment_dfs(
         sessions,
         radar_patient_id_map.filter(pl.col("ukrdcid").is_not_null()).get_column(
             "ukrdcid"
         ),
-        codes,
-        satellite,
-        source_group_id_mapping,
-        radar_patient_id_map,
-        audit_writer,
+        radar_patient_id_map.filter(pl.col("rr_no").is_not_null()).get_column("rr_no"),
     )
 
     df_collection = format_treatment(
@@ -63,9 +78,6 @@ def treatment_run(
         audit_writer,
     )
 
-    cols = df_collection["ukrdc"].head()
-
-    audit_writer.add_text("Treatment Process", "Heading 3")
     audit_writer.add_text("Importing Treatment data from:")
     audit_writer.set_ws(worksheet_name="treatment_import")
     audit_writer.add_table(
@@ -74,21 +86,28 @@ def treatment_run(
     audit_writer.add_table(
         text="  RADAR", table=df_collection["radar"], table_name="treatment_radar"
     )
-    audit_writer.add_change(
-        "Converting ukrdc into common formats, includes patient numbers and modality codes ",
-        [cols, df_collection["ukrdc"].head()],
-    )
     audit_writer.add_table(
-        text="UKRDC treatments in RADAR format",
-        table=df_collection["ukrdc"],
-        table_name="format_ukrdc",
+        text="  RR", table=df_collection["rr"], table_name="treatment_rr"
     )
-    audit_writer.add_text(
-        "After formatting treatments in radar format similar treatments need to be Aggregated"
+
+    audit_writer.add_info(
+        "Treatments Imported", ("rr count", str(len(df_collection["rr"])))
     )
+    audit_writer.add_info(
+        "Treatments Imported", ("radar count", str(len(df_collection["radar"])))
+    )
+    audit_writer.add_info(
+        "Treatments Imported", ("ukrdc count", str(len(df_collection["ukrdc"])))
+    )
+
     audit_writer.set_ws("group_reduce_Treatment")
 
-    df_collection = group_and_reduce_ukrdc_dataframe(df_collection, audit_writer)
+    df_collection["ukrdc"] = group_and_reduce_ukrdc_or_rr_dataframe(
+        df_collection["ukrdc"], audit_writer, "ukrdc"
+    )
+    df_collection["rr"] = group_and_reduce_ukrdc_or_rr_dataframe(
+        df_collection["rr"], audit_writer, "rr"
+    )
 
     combined_dataframe = combine_treatment_dataframes(df_collection)
 
@@ -103,7 +122,7 @@ def treatment_run(
     audit_writer.add_text(
         "The data is now consolidated into one table and requires grouping and aggregation."
     )
-
+    # TODO disscuss wether this is all the grouping required and do it over sourcetypes first
     reduced_dataframe = group_and_reduce_combined_treatment_dataframe(
         combined_dataframe
     )
@@ -119,10 +138,6 @@ def treatment_run(
     )
 
     audit_writer.set_ws("Treatment_output")
-    # TODO may not be needed as db defaults time
-    new_treatments, existing_treatments = fill_null_time(
-        new_treatments, existing_treatments
-    )
     audit_writer.add_table(
         text="data that is new", table=new_treatments, table_name="new_Treatment"
     )
@@ -131,19 +146,19 @@ def treatment_run(
     )
 
     audit_writer.add_info(
-        "treatments out",
+        "treatments output breakdown",
         (
-            "total to update/create:",
+            "total update/create:",
             str(len(new_treatments) + len(existing_treatments)),
         ),
     )
     audit_writer.add_info(
-        "treatments out",
-        ("total transplants to update", str(len(existing_treatments))),
+        "treatments output breakdown",
+        ("to update", str(len(existing_treatments))),
     )
     audit_writer.add_info(
-        "treatments out",
-        ("total transplants to create", str(len(new_treatments))),
+        "treatments output breakdown",
+        ("to create", str(len(new_treatments))),
     )
 
     # =====================< WRITE TO DATABASE >==================
@@ -189,21 +204,32 @@ def format_treatment(
         dict[str, pl.DataFrame]: Dictionary of DataFrames with updated UKRDC treatment table format.
     """
 
-    audit_writer.add_text("formating ukrdc data into radar format")
-    pat_map = radar_patient_id_map.drop_nulls(["ukrdcid"]).unique(subset=["ukrdcid"])
-
+    ukrdc_pat_map = radar_patient_id_map.drop_nulls(["ukrdcid"]).unique(
+        subset=["ukrdcid"]
+    )
+    rr_pat_map = radar_patient_id_map.drop_nulls(["rr_no"]).unique(subset=["rr_no"])
     audit_writer.add_change(
-        "using map of patients convert ukrdc ids into radar ids and assign to patient_id column",
+        "convert UKRDC IDs to RADAR IDs via patient map and assign them to the patient_id column. "
+        "The mapping process is as follows:",
         [
             ["ukrdcid"],
             ["radar ids"],
             ["patient_id"],
         ],
     )
-
+    # TODO add None default to source_group_id
     df_collection["ukrdc"] = df_collection["ukrdc"].with_columns(
         id=pl.lit(None),
-        source_type=pl.lit(None),
+        source_type=pl.lit("UKRDC"),
+        source_group_id=pl.col("source_group_id").replace(
+            satellite.get_column("satellite_code"),
+            satellite.get_column("main_unit_code"),
+        ),
+    )
+
+    df_collection["rr"] = df_collection["rr"].with_columns(
+        id=pl.lit(None),
+        source_type=pl.lit("RR"),
         source_group_id=pl.col("source_group_id").replace(
             satellite.get_column("satellite_code"),
             satellite.get_column("main_unit_code"),
@@ -212,8 +238,25 @@ def format_treatment(
 
     df_collection["ukrdc"] = df_collection["ukrdc"].with_columns(
         patient_id=pl.col("patient_id").replace(
-            pat_map.get_column("ukrdcid"),
-            pat_map.get_column("radar_id"),
+            ukrdc_pat_map.get_column("ukrdcid"),
+            ukrdc_pat_map.get_column("radar_id"),
+            default="None",
+        ),
+        source_group_id=pl.col("source_group_id").replace(
+            source_group_id_mapping.get_column("code"),
+            source_group_id_mapping.get_column("id"),
+        ),
+        modality=pl.col("modality").replace(
+            codes.get_column("registry_code"),
+            codes.get_column("equiv_modality"),
+            default=None,
+        ),
+    )
+
+    df_collection["rr"] = df_collection["rr"].with_columns(
+        patient_id=pl.col("patient_id").replace(
+            rr_pat_map.get_column("rr_no"),
+            rr_pat_map.get_column("radar_id"),
             default="None",
         ),
         source_group_id=pl.col("source_group_id").replace(
@@ -230,21 +273,87 @@ def format_treatment(
     return df_collection
 
 
+base = declarative_base()
+
+
+class Treatment(base):
+    __tablename__ = "TREATMENT"
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "RR_NO",
+            "DATE_START",
+            "TREATMENT_MODALITY",
+            "HOSP_CENTRE",
+            "TREATMENT_CENTRE",
+            name="PK_TREATMENT",
+        ),
+    )
+
+    RR_NO = Column(BigInteger, primary_key=True)
+    DATE_START = Column(DateTime, primary_key=True)
+    TREATMENT_MODALITY = Column(Unicode(8, "Latin1_General_CI_AS"), primary_key=True)
+    TREATMENT_CENTRE = Column(Unicode(8, "Latin1_General_CI_AS"), primary_key=True)
+    HOSP_CENTRE = Column(Unicode(8, "Latin1_General_CI_AS"), primary_key=True)
+    DATE_END = Column(DateTime)
+    ADD_HAEMO_ON_PD = Column(Unicode(1, "Latin1_General_CI_AS"))
+    CHANGE_TREATMENT = Column(Unicode(8, "Latin1_General_CI_AS"))
+    HAEMO_DIAL_ACCESS = Column(Unicode(8, "Latin1_General_CI_AS"))
+    FGS_SITE = Column(Unicode(8, "Latin1_General_CI_AS"))
+    HD_CATHETER_SITE = Column(Unicode(8, "Latin1_General_CI_AS"))
+    DIALYSER_USED = Column(Unicode(8, "Latin1_General_CI_AS"))
+    FLOW_RATE = Column(Numeric(38, 4))
+    DIAL_REUSE = Column(Unicode(1, "Latin1_General_CI_AS"))
+    TIMES_PER_WEEK = Column(Numeric(20, 0))
+    DIAL_TIME = Column(Numeric(38, 4))
+    BICARB_DIAL = Column(Unicode(1, "Latin1_General_CI_AS"))
+    HD_SUPERVISON = Column(Unicode(4, "Latin1_General_CI_AS"))
+    WEEKLY_FLUID_VOL = Column(Numeric(38, 4))
+    BAG_SIZE = Column(Numeric(38, 4))
+    LOAD_IND = Column(Unicode(1, "Latin1_General_CI_AS"))
+    DISPLAY_SEQ = Column(Numeric(38, 4))
+    YEAR_END_SEQ = Column(Numeric(38, 4))
+    TRANSFER_IN_FROM = Column(Unicode(10, "Latin1_General_CI_AS"))
+    TRANSFER_OUT_TO = Column(Unicode(10, "Latin1_General_CI_AS"))
+
+    # Synonyms
+    rr_no: Mapped[int] = synonym("RR_NO")
+    date_start: Mapped[datetime.datetime] = synonym("DATE_START")
+    treatment_modality: Mapped[str] = synonym("TREATMENT_MODALITY")
+    treatment_centre: Mapped[str] = synonym("TREATMENT_CENTRE")
+    hosp_centre: Mapped[str] = synonym("HOSP_CENTRE")
+    date_end: Mapped[Optional[datetime.datetime]] = synonym("DATE_END")
+    add_haemo_on_pd: Mapped[Optional[str]] = synonym("ADD_HAEMO_ON_PD")
+    change_treatment: Mapped[Optional[str]] = synonym("CHANGE_TREATMENT")
+    haemo_dial_access: Mapped[Optional[str]] = synonym("HAEMO_DIAL_ACCESS")
+    fgs_site: Mapped[Optional[str]] = synonym("FGS_SITE")
+    hd_catheter_site: Mapped[Optional[str]] = synonym("HD_CATHETER_SITE")
+    dialyser_used: Mapped[Optional[str]] = synonym("DIALYSER_USED")
+    flow_rate: Mapped[Optional[decimal.Decimal]] = synonym("FLOW_RATE")
+    dial_reuse: Mapped[Optional[str]] = synonym("DIAL_REUSE")
+    times_per_week: Mapped[Optional[decimal.Decimal]] = synonym("TIMES_PER_WEEK")
+    dial_time: Mapped[Optional[decimal.Decimal]] = synonym("DIAL_TIME")
+    bicarb_dial: Mapped[Optional[str]] = synonym("BICARB_DIAL")
+    hd_supervison: Mapped[Optional[str]] = synonym("HD_SUPERVISON")
+    weekly_fluid_vol: Mapped[Optional[decimal.Decimal]] = synonym("WEEKLY_FLUID_VOL")
+    bag_size: Mapped[Optional[decimal.Decimal]] = synonym("BAG_SIZE")
+    load_ind: Mapped[Optional[str]] = synonym("LOAD_IND")
+    display_seq: Mapped[Optional[decimal.Decimal]] = synonym("DISPLAY_SEQ")
+    year_end_seq: Mapped[Optional[decimal.Decimal]] = synonym("YEAR_END_SEQ")
+    transfer_in_from: Mapped[Optional[str]] = synonym("TRANSFER_IN_FROM")
+    transfer_out_to: Mapped[Optional[str]] = synonym("TRANSFER_OUT_TO")
+
+
 def make_treatment_dfs(
-    sessions: dict[str, Session],
-    filter: pl.Series,
-    codes: pl.DataFrame,
-    satellite: pl.DataFrame,
-    source_group_id_mapping: pl.DataFrame,
-    radar_patient_id_map: pl.DataFrame,
-    audit_writer: AuditWriter,
+    sessions: dict[str, Session], ukrdc_filter: pl.Series, ukrr_filter: pl.Series
 ) -> dict[str, pl.DataFrame]:
     """
     Convert sessions data into DataFrame collection holding treatments.
 
     Args:
+
+        ukrr_filter:
         sessions (dict): A dictionary containing session information.
-        filter (pl.Series, optional):A filter of ids to pull
+        ukrdc_filter (pl.Series, optional):A filter of ids to pull
 
     Returns:
         dict: A dictionary containing DataFrames corresponding to each session.
@@ -271,7 +380,7 @@ def make_treatment_dfs(
 
     check_nulls_in_column(df_collection["radar"], "from_date")
 
-    str_filter = filter.cast(pl.String).to_list()
+    str_filter = ukrdc_filter.cast(pl.String).to_list()
 
     ukrdc_query = (
         sessions["ukrdc"]
@@ -291,14 +400,43 @@ def make_treatment_dfs(
     )
 
     df_collection["ukrdc"] = get_data_as_df(sessions["ukrdc"], ukrdc_query)
+
     check_nulls_in_column(df_collection["ukrdc"], "from_date")
 
+    df_collection["ukrdc"] = df_collection["ukrdc"].filter(
+        pl.col("modality").is_not_null()
+    )
+
+    check_nulls_in_column(df_collection["ukrdc"], "modality")
+
+    df_collection["rr"] = pl.DataFrame()
+    for chunk in chunk_list(ukrr_filter.cast(pl.String).to_list(), 1000):
+        rr_query = select(
+            Treatment.rr_no.label("patient_id"),
+            Treatment.treatment_centre.label("source_group_id"),
+            Treatment.treatment_modality.label("modality"),
+            Treatment.date_start.label("from_date"),
+            Treatment.date_end.label("to_date"),
+        ).filter(Treatment.rr_no.in_(chunk))
+        df_chunk = get_data_as_df(sessions["rr"], rr_query)
+        df_collection["rr"] = pl.concat([df_collection["rr"], df_chunk])
+    df_collection["rr"] = df_collection["rr"].with_columns(
+        id=pl.lit(None),
+        created_date=pl.lit(None).cast(pl.Date),
+        modified_date=pl.lit(None).cast(pl.Date),
+    )
+    check_nulls_in_column(df_collection["rr"], "from_date")
+
+    df_collection["rr"] = df_collection["rr"].filter(pl.col("modality").is_not_null())
+
+    check_nulls_in_column(df_collection["rr"], "modality")
     return df_collection
 
 
-def group_and_reduce_ukrdc_dataframe(
-    df_collection: dict[str, pl.DataFrame],
+def group_and_reduce_ukrdc_or_rr_dataframe(
+    df: pl.DataFrame,
     audit_writer: AuditWriter,
+    name: str,
 ) -> pl.DataFrame:
     """
     Group and reduce the combined DataFrame by patient_id and group_id.
@@ -311,33 +449,25 @@ def group_and_reduce_ukrdc_dataframe(
     - DataFrame: The reduced DataFrame with grouped and aggregated data.
     """
 
-    df_collection["ukrdc"] = group_similar_or_overlapping_range(
-        df_collection["ukrdc"], ["patient_id", "modality"]
-    )
+    df = group_similar_or_overlapping_range(df, ["patient_id", "modality"])
 
     audit_writer.add_table(
-        "Grouping treatments by modality and patient ID, "
-        "where each treatment within a group overlaps or is within 5 days of another",
-        df_collection["ukrdc"],
-        "date_range_over_patient_id_modality_ukrdc",
+        """Grouping treatments by modality and patient ID, a treatment can be grouped together if any overlapping 
+        dates exist or dates are within 5 days either side of each other""",
+        df,
+        f"date_range_over_patient_id_modality_{name}",
     )
 
-    # TODO ask david about this part may not be needed as modality grouping will cover this
-    # get min and max dates for recent date to get most up to date row
-    df_collection["ukrdc"] = df_collection["ukrdc"].with_columns(
+    df = df.with_columns(
         pl.max_horizontal(["created_date", "modified_date"]).alias("most_recent_date")
     )
 
-    # TODO: Explain
-    # Group patient_id, modality, and group_id getting the earliest and latest to and from date?
-    # does this account for re-occurring modalities
-    # |---- MOD A ----||---- MOD B ----||---- MOD A ----|
-    # Would this become
-    # |---- MOD A --------------------------------------|
-    #                  |----MOD B ----|
-    df_collection["ukrdc"] = (
-        df_collection["ukrdc"]
-        .sort(
+    # for each patient_id, modality, group_id combination where group id represents overlapping dates,
+    # we select the earliest from date and latest to date where to date is not null,
+    # all other columns are decided by most recent creation or update date regardless of if value is null
+
+    df = (
+        df.sort(
             "most_recent_date",
             descending=True,
         )
@@ -347,7 +477,7 @@ def group_and_reduce_ukrdc_dataframe(
             max_with_nulls(pl.col("to_date")).alias("to_date"),
             **{
                 col: pl.col(col).first()
-                for col in df_collection["ukrdc"].columns
+                for col in df.columns
                 if col
                 not in ["from_date", "to_date", "patient_id", "modality", "group_id"]
             },
@@ -356,28 +486,28 @@ def group_and_reduce_ukrdc_dataframe(
 
     audit_writer.add_table(
         "Reducing treatments by selecting representative values from each group",
-        df_collection["ukrdc"],
-        "date_range_over_patient_id_modality_reduced_ukrdc",
+        df,
+        f"date_range_over_patient_id_modality_reduced_{name}",
     )
 
-    # with the now grouped ranges check that no treatments overlap with another
-    # set to 15 days as patient can not undergo different treatment within 15 days
-    df_collection["ukrdc"] = group_similar_or_overlapping_range(
-        df_collection["ukrdc"], ["patient_id"], day_override=15
-    )
+    # for each patient_id, group_id combination where group id represents overlapping dates,
+    # we select the earliest from date and latest to date where to date is not null,
+    # all other columns are decided by most recent creation or update date regardless of if value is null
+    # this coalesces modalities into one
+
+    df = group_similar_or_overlapping_range(df, ["patient_id"], day_override=15)
 
     audit_writer.add_table(
-        "Re Grouping treatments by patient ID, "
-        "where each treatment within a group overlaps or is within 15 days of another effectively combining modalities",
-        df_collection["ukrdc"],
-        "date_range_over_patient_id_ukrdc",
+        """Grouping treatments by only patient ID, a treatment can be grouped together if any overlapping dates exist 
+        or dates are within 15 days either side of each other""",
+        df,
+        f"date_range_over_patient_id_{name}",
     )
 
     # TODO also ask david about this part
     # aggregate columns into one
-    df_collection["ukrdc"] = (
-        df_collection["ukrdc"]
-        .sort(
+    df = (
+        df.sort(
             "most_recent_date",
             descending=True,
         )
@@ -388,7 +518,7 @@ def group_and_reduce_ukrdc_dataframe(
             pl.col("modality").first(),
             **{
                 col: pl.col(col).first()
-                for col in df_collection["ukrdc"].columns
+                for col in df.columns
                 if col
                 not in ["from_date", "to_date", "patient_id", "modality", "group_id"]
             },
@@ -397,20 +527,21 @@ def group_and_reduce_ukrdc_dataframe(
     )
 
     audit_writer.add_table(
-        "Reducing treatments by selecting representative values from each group",
-        df_collection["ukrdc"],
-        "date_range_over_patient_id_reduced_ukrdc",
+        "from each group select the smallest from date and largest to date(where null is largest) and the first of "
+        "value of each column ordered by the most recent entry",
+        df,
+        f"date_range_over_patient_id_reduced_{name}",
     )
 
-    return df_collection
+    return df
 
 
 def group_similar_or_overlapping_range(
     df: pl.DataFrame, window: List[str], day_override: int = 5
 ) -> pl.DataFrame:
     """
-    Group similar or overlapping date ranges within a specified window.
-    TODO: Explain why
+    Group similar or overlapping date ranges within a specified window. ie transplants of similar ranges can be seen as
+     a single continous range
 
     Args:
         df (pl.DataFrame): Input DataFrame containing date ranges.
@@ -424,17 +555,28 @@ def group_similar_or_overlapping_range(
     mask = overlapping_dates_bool_mask(days=day_override)
     descending = [False] * len(window) + [False, True]
 
-    # TODO: Why?
+    # Sorting the data first by 'from_date' in descending order to arrange the entries chronologically, and then by
+    # 'to_date' in ascending order to ensure that in the case of date clashes.
+    # This method then shifts data so that each row can reference a prior 'from_date'
+
     df = df.sort(window + ["from_date", "to_date"], descending=descending).with_columns(
         pl.col("from_date").shift().over(window).alias("prev_from_date")
     )
 
-    # TODO: Why?
+    # Sorting the data by 'to_date' in ascending order to ensure that in the case of date clashes.
+    # This method then shifts data so that each row can reference a prior 'to_date'
+
     df = df.sort(window + ["to_date"], nulls_last=True).with_columns(
         pl.col("to_date").shift().forward_fill().over(window).alias("prev_to_date")
     )
 
-    # TODO: Why?
+    # By sorting the data chronologically, we align the rows so that each entry references the 'from_date' and
+    # 'to_date' of the previous row. We then apply a mask to identify where there are gaps or overlaps between the
+    # 'from_date' and 'to_date' of consecutive rows. These gaps or overlaps are marked with a 'group_id' of 1,
+    # indicating that the current row does not belong to the same group as the previous rows. Finally, we use 'run
+    # length encoding' (cumulative sum) on the 'group_id' to assign unique group IDs to consecutive groups of
+    # overlapping intervals.
+
     df = (
         df.sort(window + ["from_date", "to_date"], descending=descending)
         .with_columns(pl.when(mask).then(0).otherwise(1).over(window).alias("group_id"))
@@ -446,6 +588,7 @@ def group_similar_or_overlapping_range(
     return df.drop(["prev_to_date", "prev_from_date"])
 
 
+# TODO check this is working nulls seem to not overlap
 def overlapping_dates_bool_mask(days: int = 5):
     """
     Generates a boolean mask to identify overlapping date ranges.
@@ -514,7 +657,7 @@ def combine_treatment_dataframes(
     combined_dataframe = combined_dataframe.sort(
         ["patient_id", "source_type", "recent_date", "from_date"], descending=True
     )
-
+    # TODO this should have source type?
     combined_dataframe = group_similar_or_overlapping_range(
         combined_dataframe, ["patient_id"], 15
     )
@@ -539,6 +682,7 @@ def group_and_reduce_combined_treatment_dataframe(reduced_dataframe: pl.DataFram
     The 'group_id' column is dropped from the DataFrame, and the 'source_type' column is cast to string and replaced with corresponding labels.
     Finally, a subset of columns is selected and returned as the reduced DataFrame.
     """
+    # TODO chcek with other source TODO
     return (
         reduced_dataframe.sort(
             ["patient_id", "source_type", "recent_date", "from_date"],
@@ -574,7 +718,6 @@ def group_and_reduce_combined_treatment_dataframe(reduced_dataframe: pl.DataFram
                 "source_type",
                 "created_date",
                 "modified_date",
-                "recent_date",
             ]
         )
     )
@@ -595,23 +738,12 @@ def split_combined_dataframe(
     new_rows (DataFrame): DataFrame containing rows from 'dataframe' with 'id' values that are not present in 'full_dataframe' (null ids).
     """
     new_rows = reduced_dataframe.filter(pl.col("id").is_null())
-    existing_rows = reduced_dataframe.filter(pl.col("id").is_not_null()).with_columns(
-        full_dataframe.select(
-            [
-                "patient_id",
-                "id",
-                "from_date",
-                "to_date",
-                "modality",
-                "source_group_id",
-                "source_type",
-                "created_date",
-                "modified_date",
-                "recent_date",
-            ]
-        )
-        .filter(pl.col("id").is_in(reduced_dataframe["id"].to_list()))
-        .with_columns(
+
+    # update treatments should have created_date dropped to not overwrite and should have modified set to current
+    existing_rows = reduced_dataframe.filter(pl.col("id").is_not_null())
+
+    temp = existing_rows.join(
+        full_dataframe.drop("group").with_columns(
             source_type=pl.col("source_type")
             .cast(pl.String)
             .replace(
@@ -619,7 +751,29 @@ def split_combined_dataframe(
                 old=["0", "1", "2", "3"],
                 default=None,
             )
-        )
+        ),
+        on="id",
+        how="left",
+        suffix="_old",
     )
-    # TODO check if filter is required
+    cols = [col for col in existing_rows.columns if col not in ["id"]]
+    existing_rows = temp.filter(mask(cols))
+    existing_rows = existing_rows.select(
+        [
+            col
+            for col in existing_rows.columns
+            if (
+                col == "created_date_old"
+                or not col.endswith("_old")
+                and col not in ["recent_date", "created_date"]
+            )
+        ]
+    ).with_columns(pl.col("created_date_old").alias("created_date"))
+    # TODO Double check this
     return existing_rows, new_rows
+
+
+def mask(cols):
+    conditions = [pl.col(col) != pl.col(f"{col}_old") for col in cols]
+    combined_condition = reduce(or_, conditions)
+    return combined_condition

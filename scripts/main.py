@@ -60,6 +60,11 @@ def main(
         table=radar_patient_id_map,
         table_name="Patient_number",
     )
+    audit.add_table(
+        text="created a map of source group IDs to their corresponding codes",
+        table=source_group_id_mapping,
+        table_name="Source_group_id_map",
+    )
 
     treatment_run(
         audit,
@@ -93,10 +98,10 @@ if __name__ == "__main__":
 
     try:
         main(audit=audit, commit=args.commit, test_run=args.test_run)
-    except Exception as e:
-        audit.add_important("{e}", True)
+    except Exception as error:
+        audit.add_important(f"{error}", True)
         audit.commit_audit()
-        raise e
+        raise error
 
     end_time = datetime.now()
     hours, minutes, seconds = calculate_runtime(end_time, start_time)

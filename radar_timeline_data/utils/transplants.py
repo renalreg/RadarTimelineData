@@ -1,3 +1,6 @@
+from functools import reduce
+from operator import or_
+
 import polars as pl
 import radar_models.radar2 as radar
 import ukrr_models.nhsbt_models as nhsbt
@@ -9,6 +12,7 @@ from radar_timeline_data.utils.connections import (
     df_batch_insert_to_sql,
     get_data_as_df,
 )
+from radar_timeline_data.utils.treatments import split_combined_dataframe
 
 from radar_timeline_data.utils.utils import chunk_list
 
@@ -52,7 +56,7 @@ def transplant_run(
 
     for key, value in df_collection.items():
         audit_writer.add_table(
-            text=f"Imported {key} transplants  \u2192 ",
+            text=f"Imported {key} transplants",
             table=value,
             table_name=f"raw_transplant_{key}",
         )
@@ -64,7 +68,7 @@ def transplant_run(
 
     audit_writer.set_ws("transplant_format")
     audit_writer.add_table(
-        "RR transplants with radar format  \u2192 ",
+        "RR transplants with radar format ",
         df_collection["rr"],
         "format_rr_table",
     )
@@ -79,9 +83,11 @@ def transplant_run(
 
     audit_writer.add_text("Transplants in RR and RADAR are merged")
     audit_writer.set_ws("transplant_merge")
+
     all_transplants = pl.concat(
         [df_collection["radar"], df_collection["rr"]], how="diagonal_relaxed"
     )
+
     audit_writer.add_table(
         "transplants after merge", all_transplants, "merged_transplants"
     )
@@ -151,7 +157,11 @@ def transplant_run(
 
     new_transplant_rows = all_transplants.filter(pl.col("id").is_null())
 
-    updated_transplant_rows = all_transplants.filter(pl.col("id").is_not_null())
+    updated_transplant_rows = all_transplants.filter(pl.col("id").is_not_null()).filter(
+        pl.col("source_type") == "RR"
+    )
+# TODO this needs checking
+    # Identify rows where any column has updated values
 
     audit_writer.add_table(
         "reduced transplants", all_transplants, "reduced_transplant_data"
@@ -159,12 +169,12 @@ def transplant_run(
     audit_writer.set_ws("transplant_output")
     audit_writer.add_table(
         "new transplants",
-        all_transplants.filter(pl.col("id").is_null()),
+        new_transplant_rows,
         "new_transplant_data",
     )
     audit_writer.add_table(
         "updated transplants",
-        all_transplants.filter(pl.col("id").is_not_null()),
+        updated_transplant_rows,
         "updated_transplant_data",
     )
 
@@ -241,6 +251,7 @@ def make_transplant_dfs(
         radar.Transplant.date,
         radar.Transplant.date_of_failure,
         radar.Transplant.source_group_id,
+        radar.Transplant.source_type
         # radar.Transplant.hla_mismatch # Uncomment when added
     )
 
@@ -345,12 +356,16 @@ def format_transplant(
     rr_map = radar_patient_id_map.drop_nulls(["rr_no"]).unique(subset=["rr_no"])
 
     df_collection["rr"] = df_collection["rr"].with_columns(
-        patient_id=pl.col("patient_id").replace(
+        patient_id=pl.col("patient_id")
+        .replace(
             rr_map.get_column("rr_no"),
             rr_map.get_column("radar_id"),
-            default="None",
+            default=None,
         )
+        .cast(pl.Int64)
     )
+    # TODO add a check here
+
     # convert transplant unit to radar int code
     df_collection = convert_transplant_unit(df_collection, sessions)
     df_collection["rr"] = get_rr_transplant_modality(df_collection["rr"])
@@ -457,3 +472,9 @@ def convert_transplant_unit(df_collection, sessions: dict[str, Session]):
     )
 
     return df_collection
+
+
+def update_mask(cols):
+    conditions = [pl.col(col) != pl.col(f"{col}_old") for col in cols]
+    combined_condition = reduce(or_, conditions)
+    return combined_condition

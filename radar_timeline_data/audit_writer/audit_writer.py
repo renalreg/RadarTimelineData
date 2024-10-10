@@ -302,27 +302,34 @@ class AuditWriter:
             table_name = table_name.strip()
             self.add_hyperlink(
                 para,
-                f"{self.filename}.xlsx#{self.current_worksheet}!{get_column_letter(self.worksheets[self.current_worksheet] + 1)}1",
+                f"{self.filename}.xlsx#{self.current_worksheet}!{get_column_letter(self.worksheets[self.current_worksheet] + 1)}4",
                 table_name,
             )
-            # Define a list of available table styles
 
-            # Select a random style
             random_style = random.choice(table_styles)
             table.write_excel(
                 workbook=self.wb,
                 worksheet=self.current_worksheet,
                 table_name=table_name,
                 table_style=random_style,
-                position=(0, self.worksheets[self.current_worksheet]),
+                position=(3, self.worksheets[self.current_worksheet]),
                 include_header=True,
             )
+
+            name_format = self.wb.add_format({"bold": True, "font_size": 18})
+
+            self.wb.get_worksheet_by_name(self.current_worksheet).write(
+                f"{get_column_letter(self.worksheets[self.current_worksheet] + 1)}2",
+                table_name.replace("_", " "),
+                name_format,
+            )
+
             self.worksheets[self.current_worksheet] += len(table.columns) + 1
             call = inspect.getframeinfo(inspect.currentframe().f_back)
             self.__logger.info(
-                f"{call.function}:{call.lineno} {text} \n {table_name} created "
+                f"{call.function}:{call.lineno} : {table_name} created "
                 f"at file path {self.filename}.xlsx#{self.current_worksheet}!"
-                f"{get_column_letter(self.worksheets[self.current_worksheet] + 1)}1"
+                f"{get_column_letter(self.worksheets[self.current_worksheet] + 1)}4"
             )
 
     def add_table_snippets(self, table: pl.DataFrame):
