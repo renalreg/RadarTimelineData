@@ -1,6 +1,7 @@
 import inspect
 import os
 import random
+from dataclasses import dataclass
 from typing import Any
 
 import docx
@@ -25,6 +26,31 @@ from radar_timeline_data.audit_writer.stylesheet import (
     table_styles,
     page_color,
 )
+
+
+@dataclass
+class Table:
+    table_name: str
+    table: pl.DataFrame
+    text: str
+
+
+@dataclass
+class List:
+    text: str | None
+    elements: list
+
+
+@dataclass
+class Heading:
+    text: str
+    style: str
+
+
+@dataclass
+class Change:
+    description: str
+    changes: list
 
 
 class AuditWriter:
@@ -170,7 +196,7 @@ class AuditWriter:
         shape.width = Inches(1)  # Adjust width as necessary
         shape.height = Inches(1)  # Adjust height as necessary
 
-    def add_change(self, description: str, changes: list[Any]):
+    def add_change(self, changes: list[Any]):
         # description of the change
 
         total_length = 0
@@ -188,7 +214,6 @@ class AuditWriter:
             else:
                 return
 
-        self.document.add_paragraph(f"{description}  ")
         para = self.document.add_paragraph()
         # self.__set_paragraph_spacing(para, 0, 0)
 
@@ -205,8 +230,6 @@ class AuditWriter:
         else:
             self.add_change_table(changes)
             self.document.add_paragraph("\n")
-        # log change
-        self.__logger.info(description)
 
     def add_hyperlink(self, paragraph, url, text):
         """
@@ -287,7 +310,9 @@ class AuditWriter:
             self.info[key] = value
         self.__logger.info(f"{key} : {value}")
 
-    def add_table(self, text: str, table: pl.DataFrame, table_name: str):
+    def add_table(
+        self, text: str, table: pl.DataFrame, table_name: str, indent_level: int = 0
+    ):
         """
         Adds a table to the xlsx document and creates a link in the current document.
 
@@ -297,8 +322,18 @@ class AuditWriter:
         - table_name (str): The name of the table must not contain spaces.
         """
         if self.__include_excel:
-            para = self.document.add_paragraph(f"{text} \u2192 ")
-            # self.__set_paragraph_spacing(para, 0, 0)
+            # If indented, apply bullet points with "List Bullet" style
+            if indent_level > 0:
+                para = self.document.add_paragraph(
+                    f"{text} \u2192 ", style="List Bullet"
+                )
+            else:
+                para = self.document.add_paragraph(f"{text} \u2192 ")
+
+            # Apply indentation based on the level
+            if indent_level > 0:
+                para.paragraph_format.left_indent = Inches(0.25 * indent_level)
+
             table_name = table_name.strip()
             self.add_hyperlink(
                 para,
@@ -398,23 +433,69 @@ class AuditWriter:
 
             cell.width = Cm(min(round(0.42 * max_length), 5))  # Default larger width
 
-    def add_text(self, text: str, style: str | None = None):
+    def add_text(self, text: str, style: str | None = None, indent_level: int = 0):
         """
         Adds text to the audit document.
 
         Parameters:
         - text (str): The text to be added.
+        - style (str | None): The style to apply to the text.
+        - indent_level (int): The level of indentation, where each level adds more indentation.
         """
-
-        para = self.document.add_paragraph(text)
+        if indent_level > 0:
+            # Add a paragraph with bullet point style for indented text
+            para = self.document.add_paragraph(text, style="List Bullet")
+        else:
+            # Regular paragraph for non-indented text
+            para = self.document.add_paragraph(text)
 
         if style:
             para.style = style
-            if "Heading" in style:
-                self.add_paragraph_border(para, ["bottom"])
+
+        # Set the indent based on the level of indentation
+        if indent_level > 0:
+            para.paragraph_format.left_indent = Inches(0.25 * indent_level)
 
         self.__logger.info(text)
-        # para.paragraph_format.left_indent = Inches(0.25)
+
+    def add(self, element: Any, indent_level: int = 0):
+        """
+        Adds an element (text, list, table) to the document.
+
+        Parameters:
+        - element (Any): The element to be added.
+        - indent_level (int): The level of indentation to be applied. Nested lists will increase this.
+        """
+        if isinstance(element, str):
+            self.add_text(element, indent_level=indent_level)
+
+        if isinstance(element, list):
+            for i in element:
+                self.add(i)
+
+        if isinstance(element, Table):
+            element: Table
+            self.add_table(
+                text=element.text,
+                table=element.table,
+                table_name=element.table_name,
+                indent_level=indent_level,
+            )
+        if isinstance(element, List):
+            element: List
+            if element.text:
+                self.add_text(element.text, indent_level=indent_level)
+            for i in element.elements:
+                # Recursively add elements with increased indentation for nested elements
+                self.add(i, indent_level=indent_level + 1)
+        if isinstance(element, Heading):
+            element: Heading
+            self.add_text(element.text, style=element.style, indent_level=indent_level)
+
+        if isinstance(element, Change):
+            element: Change
+            self.add_text(element.description, indent_level=indent_level)
+            self.add_change(element.changes)
 
     def add_top_breakdown(self):
         """

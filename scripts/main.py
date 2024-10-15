@@ -22,6 +22,7 @@ from radar_timeline_data import (
     treatment_run,
     transplant_run,
 )
+from radar_timeline_data.audit_writer import Table, List
 
 
 def main(
@@ -44,26 +45,31 @@ def main(
     radar_patient_id_map = make_patient_map(sessions)
     source_group_id_mapping = get_source_group_id_mapping(sessions["radar"])
 
-    audit.set_ws(worksheet_name="mappings")
-    audit.add_table(
-        text="retrieved modality codes from ukrdc",
-        table=codes,
-        table_name="Modality_Codes",
-    )
-    audit.add_table(
-        text="retrieved unit codes from ukrdc",
-        table=satellite,
-        table_name="Satellite_Units",
-    )
-    audit.add_table(
-        text="created a map of patients from each database",
-        table=radar_patient_id_map,
-        table_name="Patient_number",
-    )
-    audit.add_table(
-        text="created a map of source group IDs to their corresponding codes",
-        table=source_group_id_mapping,
-        table_name="Source_group_id_map",
+    audit.set_ws(worksheet_name="Data_Mapping_Overview")
+    audit.add(
+        [
+            "Preprocessing and Data Mapping",
+            Table(
+                text="retrieved modality codes from ukrdc",
+                table=codes,
+                table_name="UKRDC_modality_codes",
+            ),
+            Table(
+                text="retrieved unit codes from ukrdc",
+                table=satellite,
+                table_name="UKRDC_unit_codes",
+            ),
+            Table(
+                text="Generated patient mapping across databases",
+                table=radar_patient_id_map,
+                table_name="Patient_number_map",
+            ),
+            Table(
+                text="Mapped source group IDs to corresponding codes",
+                table=source_group_id_mapping,
+                table_name="Source_group_id_map",
+            ),
+        ]
     )
 
     treatment_run(
@@ -78,7 +84,7 @@ def main(
 
     transplant_run(audit, sessions, radar_patient_id_map, commit)
 
-    audit.add_text("end of script")
+    audit.add("end of script")
 
     for session in sessions.values():
         session.close()

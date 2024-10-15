@@ -22,13 +22,19 @@ from sqlalchemy import (
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, synonym, Mapped
 
-from radar_timeline_data.audit_writer.audit_writer import AuditWriter
+from radar_timeline_data.audit_writer.audit_writer import (
+    AuditWriter,
+    Heading,
+    Change,
+    Table,
+    StubObject,
+)
+from radar_timeline_data.audit_writer.audit_writer import List as Li
 from radar_timeline_data.utils.connections import (
     df_batch_insert_to_sql,
     get_data_as_df,
 )
 from radar_timeline_data.utils.utils import (
-    fill_null_time,
     check_nulls_in_column,
     max_with_nulls,
     chunk_list,
@@ -59,7 +65,7 @@ def treatment_run(
         None
     """
 
-    audit_writer.add_text("Treatment Process", "Heading 3")
+    audit_writer.add(Heading("Processing Treatments", "Heading 3"))
 
     df_collection = make_treatment_dfs(
         sessions,
@@ -77,19 +83,25 @@ def treatment_run(
         radar_patient_id_map,
         audit_writer,
     )
-
-    audit_writer.add_text("Importing Treatment data from:")
     audit_writer.set_ws(worksheet_name="treatment_import")
-    audit_writer.add_table(
-        text="  UKRDC", table=df_collection["ukrdc"], table_name="treatment_ukrdc"
+    audit_writer.add(
+        Li(
+            "Importing Treatment data from:",
+            [
+                Table(
+                    text="UKRDC",
+                    table=df_collection["ukrdc"],
+                    table_name="treatment_ukrdc",
+                ),
+                Table(
+                    text="RADAR",
+                    table=df_collection["radar"],
+                    table_name="treatment_radar",
+                ),
+                Table(text="RR", table=df_collection["rr"], table_name="treatment_rr"),
+            ],
+        )
     )
-    audit_writer.add_table(
-        text="  RADAR", table=df_collection["radar"], table_name="treatment_radar"
-    )
-    audit_writer.add_table(
-        text="  RR", table=df_collection["rr"], table_name="treatment_rr"
-    )
-
     audit_writer.add_info(
         "Treatments Imported", ("rr count", str(len(df_collection["rr"])))
     )
@@ -117,6 +129,7 @@ def treatment_run(
         table=combined_dataframe,
         table_name="raw_combined_Treatment",
     )
+    # TODO: fix this
 
     audit_writer.set_ws("group_reduce_all_Treatment")
     audit_writer.add_text(
@@ -208,14 +221,71 @@ def format_treatment(
         subset=["ukrdcid"]
     )
     rr_pat_map = radar_patient_id_map.drop_nulls(["rr_no"]).unique(subset=["rr_no"])
-    audit_writer.add_change(
-        "convert UKRDC IDs to RADAR IDs via patient map and assign them to the patient_id column. "
-        "The mapping process is as follows:",
-        [
-            ["ukrdcid"],
-            ["radar ids"],
-            ["patient_id"],
-        ],
+
+    audit_writer.add(
+        Li(
+            "Formatting Treatments",
+            [
+                Li(
+                    "UKRDC Changes",
+                    [
+                        Change(
+                            "using the Patient number mapping convert ukrdc patient ids to radar ids",
+                            [
+                                ["ukrdcid"],
+                                ["radar ids"],
+                                ["patient_id"],
+                            ],
+                        ),
+                        Change(
+                            "replace the source group id with the main unit code",
+                            [
+                                ["satellite_code"],
+                                ["main_unit_code"],
+                                ["source_group_id"],
+                            ],
+                        ),
+                        Change(
+                            "replace the modality with the equivalent modality code",
+                            [
+                                ["registry_code"],
+                                ["equivalent_modality"],
+                                ["modality"],
+                            ],
+                        ),
+                    ],
+                ),
+                Li(
+                    "RR Changes",
+                    [
+                        Change(
+                            "using the Patient number mapping convert ukrdc patient ids to radar ids",
+                            [
+                                ["rr_no"],
+                                ["radar ids"],
+                                ["patient_id"],
+                            ],
+                        ),
+                        Change(
+                            "replace the source group id with the main unit code",
+                            [
+                                ["satellite_code"],
+                                ["main_unit_code"],
+                                ["source_group_id"],
+                            ],
+                        ),
+                        Change(
+                            "replace the modality with the equivalent modality code",
+                            [
+                                ["registry_code"],
+                                ["equivalent_modality"],
+                                ["modality"],
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
     )
     # TODO add None default to source_group_id
     df_collection["ukrdc"] = df_collection["ukrdc"].with_columns(
@@ -435,7 +505,7 @@ def make_treatment_dfs(
 
 def group_and_reduce_ukrdc_or_rr_dataframe(
     df: pl.DataFrame,
-    audit_writer: AuditWriter,
+    audit_writer: AuditWriter | StubObject,
     name: str,
 ) -> pl.DataFrame:
     """
@@ -465,7 +535,7 @@ def group_and_reduce_ukrdc_or_rr_dataframe(
     # for each patient_id, modality, group_id combination where group id represents overlapping dates,
     # we select the earliest from date and latest to date where to date is not null,
     # all other columns are decided by most recent creation or update date regardless of if value is null
-
+    # TODO ask about this VVV
     df = (
         df.sort(
             "most_recent_date",
@@ -488,49 +558,6 @@ def group_and_reduce_ukrdc_or_rr_dataframe(
         "Reducing treatments by selecting representative values from each group",
         df,
         f"date_range_over_patient_id_modality_reduced_{name}",
-    )
-
-    # for each patient_id, group_id combination where group id represents overlapping dates,
-    # we select the earliest from date and latest to date where to date is not null,
-    # all other columns are decided by most recent creation or update date regardless of if value is null
-    # this coalesces modalities into one
-
-    df = group_similar_or_overlapping_range(df, ["patient_id"], day_override=15)
-
-    audit_writer.add_table(
-        """Grouping treatments by only patient ID, a treatment can be grouped together if any overlapping dates exist 
-        or dates are within 15 days either side of each other""",
-        df,
-        f"date_range_over_patient_id_{name}",
-    )
-
-    # TODO also ask david about this part
-    # aggregate columns into one
-    df = (
-        df.sort(
-            "most_recent_date",
-            descending=True,
-        )
-        .group_by(["patient_id", "group_id"])
-        .agg(
-            pl.col("from_date").min(),
-            max_with_nulls(pl.col("to_date")).alias("to_date"),
-            pl.col("modality").first(),
-            **{
-                col: pl.col(col).first()
-                for col in df.columns
-                if col
-                not in ["from_date", "to_date", "patient_id", "modality", "group_id"]
-            },
-        )
-        .drop(columns=["group_id", "id", "most_recent_date"])
-    )
-
-    audit_writer.add_table(
-        "from each group select the smallest from date and largest to date(where null is largest) and the first of "
-        "value of each column ordered by the most recent entry",
-        df,
-        f"date_range_over_patient_id_reduced_{name}",
     )
 
     return df
@@ -568,6 +595,17 @@ def group_similar_or_overlapping_range(
 
     df = df.sort(window + ["to_date"], nulls_last=True).with_columns(
         pl.col("to_date").shift().forward_fill().over(window).alias("prev_to_date")
+    )
+    df = (
+        df.with_columns(pl.col("to_date").shift(-1).alias("next_to_date").over(window))
+        .with_columns(
+            pl.when(pl.col("prev_to_date").is_null())
+            .then(pl.col("next_to_date"))
+            .otherwise(pl.col("prev_to_date"))
+            .over(window)
+            .alias("prev_to_date")
+        )
+        .drop("next_to_date")
     )
 
     # By sorting the data chronologically, we align the rows so that each entry references the 'from_date' and
@@ -647,8 +685,8 @@ def combine_treatment_dataframes(
     combined_dataframe = combined_dataframe.with_columns(
         pl.col("source_type")
         .replace(
-            old=["BATCH", "UKRDC", "RADAR", "RR"],
-            new=["0", "1", "2", "3"],
+            old=["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"],
+            new=["0", "1", "2", "3", "4"],
             default=None,
         )
         .cast(pl.Int32)
@@ -657,9 +695,9 @@ def combine_treatment_dataframes(
     combined_dataframe = combined_dataframe.sort(
         ["patient_id", "source_type", "recent_date", "from_date"], descending=True
     )
-    # TODO this should have source type?
+    # TODO check this as it was 15 and patient id
     combined_dataframe = group_similar_or_overlapping_range(
-        combined_dataframe, ["patient_id"], 15
+        combined_dataframe, ["patient_id", "modality"], 5
     )
 
     return combined_dataframe
@@ -702,8 +740,8 @@ def group_and_reduce_combined_treatment_dataframe(reduced_dataframe: pl.DataFram
             source_type=pl.col("source_type")
             .cast(pl.String)
             .replace(
-                new=["BATCH", "UKRDC", "RADAR", "RR"],
-                old=["0", "1", "2", "3"],
+                new=["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"],
+                old=["0", "1", "2", "3", "4"],
                 default=None,
             )
         )
