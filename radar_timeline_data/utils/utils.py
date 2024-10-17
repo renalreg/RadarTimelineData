@@ -37,8 +37,8 @@ def calculate_runtime(end_time, start_time):
     return hours, minutes, seconds
 
 
-def create_audit(start_time, audit_path):
-    audit: AuditWriter = AuditWriter(
+def create_audit(start_time, audit_path) -> AuditWriter:
+    audit = AuditWriter(
         f"{audit_path}",
         f"rdrTimeLineDataLog-{start_time.strftime('%d-%m-%Y')}",
         "Radar Timeline Data Log",

@@ -382,7 +382,7 @@ def format_treatment(
 base = declarative_base()
 
 
-class Treatment(base):
+class Treatment(base):  # type: ignore
     __tablename__ = "TREATMENT"
     __table_args__ = (
         PrimaryKeyConstraint(

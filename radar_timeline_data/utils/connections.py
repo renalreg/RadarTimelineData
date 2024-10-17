@@ -196,6 +196,7 @@ def df_batch_insert_to_sql(
         print(data)
         try:
             # Create an insert statement
+            # TODO check that this may work radar.Transplant
             stmt = insert(table).values(data)  # type : ignore
 
             # Define the update action on conflict
