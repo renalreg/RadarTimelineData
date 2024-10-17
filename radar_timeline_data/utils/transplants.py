@@ -4,16 +4,14 @@ from operator import or_
 import polars as pl
 import radar_models.radar2 as radar
 import ukrr_models.nhsbt_models as nhsbt
-from sqlalchemy.orm import Session
 from sqlalchemy import select, cast, String, Date
+from sqlalchemy.orm import Session
 
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
 from radar_timeline_data.utils.connections import (
     df_batch_insert_to_sql,
     get_data_as_df,
 )
-from radar_timeline_data.utils.treatments import split_combined_dataframe
-
 from radar_timeline_data.utils.utils import chunk_list
 
 
@@ -78,18 +76,22 @@ def transplant_run(
 
     df_collection = group_and_reduce_transplant_rr(audit_writer, df_collection)
     audit_writer.add_table(
-        "reduced RR transplants", df_collection["rr"], "reduced_rr_transplants"
+        "each group within patient_id and modality combinations have been reduced to one row per group",
+        df_collection["rr"],
+        "reduced_rr_transplants",
     )
 
     audit_writer.add_text("Transplants in RR and RADAR are merged")
-    audit_writer.set_ws("transplant_merge")
+    audit_writer.set_ws("combined_transplants")
 
     all_transplants = pl.concat(
         [df_collection["radar"], df_collection["rr"]], how="diagonal_relaxed"
     )
 
     audit_writer.add_table(
-        "transplants after merge", all_transplants, "merged_transplants"
+        "transplants from radar and rr have been combined into one table",
+        all_transplants,
+        "all_transplants",
     )
 
     audit_writer.add_text(
@@ -100,7 +102,10 @@ def transplant_run(
     cols = all_transplants.columns
 
     all_transplants = (all_transplants.sort("patient_id", "date")).with_columns(
-        pl.col(col_name).shift().over("patient_id").alias(f"{col_name}_shifted")
+        pl.col(col_name)
+        .shift()
+        .over("patient_id", "modality")
+        .alias(f"{col_name}_shifted")
         for col_name in cols
     )
 
@@ -108,10 +113,18 @@ def transplant_run(
     mask = abs(pl.col("date") - pl.col("date_shifted")) <= pl.duration(days=5)
     # group using the mask and perform a 'run length encoding'
     all_transplants = all_transplants.with_columns(
-        pl.when(mask).then(0).otherwise(1).over("patient_id").alias("group_id")
+        pl.when(mask)
+        .then(0)
+        .otherwise(1)
+        .over("patient_id", "modality")
+        .alias("group_id")
     )
     all_transplants = all_transplants.with_columns(
-        pl.col("group_id").cumsum().rle_id().over("patient_id").alias("group_id")
+        pl.col("group_id")
+        .cumsum()
+        .rle_id()
+        .over("patient_id", "modality")
+        .alias("group_id")
     )
 
     # convert source types into priority numbers
@@ -126,17 +139,17 @@ def transplant_run(
     )
     # sort data in regard to source priority
     all_transplants = all_transplants.sort(
-        "patient_id", "group_id", "source_type", descending=True
+        "patient_id", "modality", "group_id", "source_type", descending=True
     )
     # group data and aggregate first non-null id and first of other columns per patient and group
     all_transplants = (
-        all_transplants.groupby(["patient_id", "group_id"])
+        all_transplants.groupby(["patient_id", "modality", "group_id"])
         .agg(
             pl.col("id").drop_nulls().first(),
             **{
                 col: pl.col(col).first()
                 for col in cols
-                if col not in ["patient_id", "group_id", "id"]
+                if col not in ["patient_id", "modality", "group_id", "id"]
             },
         )
         .drop(columns=["group_id"])
@@ -160,7 +173,7 @@ def transplant_run(
     updated_transplant_rows = all_transplants.filter(pl.col("id").is_not_null()).filter(
         pl.col("source_type") == "RR"
     )
-# TODO this needs checking
+    # TODO this needs checking
     # Identify rows where any column has updated values
 
     audit_writer.add_table(
@@ -301,39 +314,45 @@ def group_and_reduce_transplant_rr(
 
     cols = df_collection["rr"].columns
     df_collection["rr"] = (df_collection["rr"].sort("patient_id", "date")).with_columns(
-        pl.col(col_name).shift().over("patient_id").alias(f"{col_name}_shifted")
+        pl.col(col_name)
+        .shift()
+        .over("patient_id", "modality")
+        .alias(f"{col_name}_shifted")
         for col_name in cols
     )
     mask = abs(pl.col("date") - pl.col("date_shifted")) <= pl.duration(days=5)
     df_collection["rr"] = df_collection["rr"].with_columns(
-        pl.when(mask).then(0).otherwise(1).over("patient_id").alias("group_id")
+        pl.when(mask)
+        .then(0)
+        .otherwise(1)
+        .over("patient_id", "modality")
+        .alias("group_id")
     )
     df_collection["rr"] = df_collection["rr"].with_columns(
-        pl.col("group_id").cumsum().rle_id().over("patient_id").alias("group_id")
+        pl.col("group_id")
+        .cumsum()
+        .rle_id()
+        .over("patient_id", "modality")
+        .alias("group_id")
     )
     audit_writer.add_table(
-        "Transplants from RR grouped based on patient_id  \u2192 ",
-        df_collection["rr"],
-        "grouped_rr",
+        "Transplants from RR over patient id and modality with overlapping dates have been grouped  \u2192 ",
+        df_collection["rr"].sort("patient_id", "modality", "group_id"),
+        "rr_data_with_grouped_ids",
     )
 
     df_collection["rr"] = (
         df_collection["rr"]
-        .groupby(["patient_id", "group_id"])
+        .groupby(["patient_id", "modality", "group_id"])
         .agg(
             **{
                 col: pl.col(col).first()
                 for col in cols
-                if col not in ["patient_id", "group_id"]
+                if col not in ["patient_id", "group_id", "modality"]
             }
         )
         .drop("group_id")
         .with_columns(pl.lit(None, pl.String).alias("id"))
-    )
-    audit_writer.add_table(
-        "Transplants from RR aggregated by first values in each group, no priority given  \u2192 ",
-        df_collection["rr"],
-        "reduced_rr",
     )
     return df_collection
 

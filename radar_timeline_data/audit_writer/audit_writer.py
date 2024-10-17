@@ -36,21 +36,26 @@ class Table:
 
 
 @dataclass
-class List:
-    text: str | None
-    elements: list
-
-
-@dataclass
 class Heading:
     text: str
     style: str
 
 
 @dataclass
+class List:
+    text: str | None | Heading
+    elements: list
+
+
+@dataclass
 class Change:
     description: str
     changes: list
+
+
+@dataclass
+class WorkSheet:
+    name: str
 
 
 class AuditWriter:
@@ -484,7 +489,14 @@ class AuditWriter:
         if isinstance(element, List):
             element: List
             if element.text:
-                self.add_text(element.text, indent_level=indent_level)
+                if isinstance(element.text, str):
+                    self.add_text(element.text, indent_level=indent_level)
+                elif isinstance(element.text, Heading):
+                    self.add_text(
+                        element.text.text,
+                        style=element.text.style,
+                        indent_level=indent_level,
+                    )
             for i in element.elements:
                 # Recursively add elements with increased indentation for nested elements
                 self.add(i, indent_level=indent_level + 1)
@@ -496,6 +508,10 @@ class AuditWriter:
             element: Change
             self.add_text(element.description, indent_level=indent_level)
             self.add_change(element.changes)
+
+        if isinstance(element, WorkSheet):
+            element: WorkSheet
+            self.set_ws(element.name)
 
     def add_top_breakdown(self):
         """

@@ -28,6 +28,7 @@ from radar_timeline_data.audit_writer.audit_writer import (
     Change,
     Table,
     StubObject,
+    WorkSheet,
 )
 from radar_timeline_data.audit_writer.audit_writer import List as Li
 from radar_timeline_data.utils.connections import (
@@ -86,7 +87,9 @@ def treatment_run(
     audit_writer.set_ws(worksheet_name="treatment_import")
     audit_writer.add(
         Li(
-            "Importing Treatment data from:",
+            Heading(
+                "Imported Treatment data and applied Formatting to tables:", "Heading 4"
+            ),
             [
                 Table(
                     text="UKRDC",
@@ -113,7 +116,13 @@ def treatment_run(
     )
 
     audit_writer.set_ws("group_reduce_Treatment")
-
+    audit_writer.add(
+        [
+            Heading("Grouping and Reducing Treatment data", "Heading 4"),
+            """Grouping UKRDC and RR seperatly treatments by modality and patient ID, a treatment can be grouped together if overlapping """
+            + """dates exist or dates are within 5 days either side of each other""",
+        ]
+    )
     df_collection["ukrdc"] = group_and_reduce_ukrdc_or_rr_dataframe(
         df_collection["ukrdc"], audit_writer, "ukrdc"
     )
@@ -124,44 +133,62 @@ def treatment_run(
     combined_dataframe = combine_treatment_dataframes(df_collection)
 
     audit_writer.set_ws("raw_all_Treatment")
-    audit_writer.add_table(
-        text="Combine data from UKRDC and RADAR",
-        table=combined_dataframe,
-        table_name="raw_combined_Treatment",
+    audit_writer.add(
+        [
+            Heading("Combining all Data Sources:", "Heading 4"),
+            Table(
+                text="Combined Treatment data of reduced UKRDC, RR with imported RADAR into one column",
+                table=combined_dataframe,
+                table_name="raw_all_Treatment",
+            ),
+            "The data is now consolidated into one table and requires grouping and aggregation.",
+        ]
     )
-    # TODO: fix this
 
     audit_writer.set_ws("group_reduce_all_Treatment")
-    audit_writer.add_text(
-        "The data is now consolidated into one table and requires grouping and aggregation."
-    )
     # TODO disscuss wether this is all the grouping required and do it over sourcetypes first
     reduced_dataframe = group_and_reduce_combined_treatment_dataframe(
         combined_dataframe
     )
-
-    audit_writer.add_table(
-        "All treatments have been grouped and reduced",
-        reduced_dataframe,
-        table_name="reduced_combined_Treatment",
+    audit_writer.add(
+        [
+            Heading("Grouping and Reducing full Treatment data", "Heading 4"),
+            Table(
+                text="All treatments have been grouped and reduced",
+                table=reduced_dataframe,
+                table_name="reduced_combined_Treatment",
+            ),
+        ]
     )
 
     existing_treatments, new_treatments = split_combined_dataframe(
         combined_dataframe, reduced_dataframe
     )
 
-    audit_writer.set_ws("Treatment_output")
-    audit_writer.add_table(
-        text="data that is new", table=new_treatments, table_name="new_Treatment"
+    audit_writer.add(
+        [
+            WorkSheet(name="Treatment_output"),
+            Li(
+                None,
+                [
+                    Table(
+                        text="data that is new",
+                        table=new_treatments,
+                        table_name="new_Treatment",
+                    ),
+                    Table(
+                        text="data to update",
+                        table=existing_treatments,
+                        table_name="update_Treatment",
+                    ),
+                ],
+            ),
+        ]
     )
-    audit_writer.add_table(
-        text="data to update", table=existing_treatments, table_name="update_Treatment"
-    )
-
     audit_writer.add_info(
         "treatments output breakdown",
         (
-            "total update/create:",
+            "total update/create",
             str(len(new_treatments) + len(existing_treatments)),
         ),
     )
@@ -176,19 +203,28 @@ def treatment_run(
 
     # =====================< WRITE TO DATABASE >==================
     if commit:
-        audit_writer.add_text("Starting data commit.")
+        audit_writer.add("Starting data commit.")
         total_rows, failed_rows = df_batch_insert_to_sql(
             new_treatments, sessions["radar"], radar.Dialysi.__table__, 1000, "id"
         )
-        audit_writer.add_text(f"{total_rows} rows of treatment data added or modified")
+        audit_writer.add(f"{total_rows} rows of treatment data added or modified")
 
         if len(failed_rows) > 0:
             temp = pl.from_dicts(failed_rows)
-            audit_writer.set_ws("errors")
-            audit_writer.add_table(
-                f"{len(failed_rows)} rows of treatment data failed",
-                temp,
-                "failed_treatment_rows",
+            audit_writer.add(
+                [
+                    WorkSheet("errors"),
+                    Li(
+                        Heading("Treatment data insert failed", "Heading 4"),
+                        [
+                            Table(
+                                text=f"{len(failed_rows)} rows of treatment data failed",
+                                table=temp,
+                                table_name="failed_treatment_rows",
+                            ),
+                        ],
+                    ),
+                ]
             )
             audit_writer.add_important(
                 f"{len(failed_rows)} rows of treatment data insert failed", True
@@ -223,11 +259,11 @@ def format_treatment(
     rr_pat_map = radar_patient_id_map.drop_nulls(["rr_no"]).unique(subset=["rr_no"])
 
     audit_writer.add(
-        Li(
-            "Formatting Treatments",
+        [
+            Heading("Formatting Treatments", "Heading 4"),
             [
-                Li(
-                    "UKRDC Changes",
+                [
+                    Heading("UKRDC changes", "Heading 5"),
                     [
                         Change(
                             "using the Patient number mapping convert ukrdc patient ids to radar ids",
@@ -254,9 +290,9 @@ def format_treatment(
                             ],
                         ),
                     ],
-                ),
-                Li(
-                    "RR Changes",
+                ],
+                [
+                    Heading("RR Changes", "Heading 5"),
                     [
                         Change(
                             "using the Patient number mapping convert ukrdc patient ids to radar ids",
@@ -283,9 +319,9 @@ def format_treatment(
                             ],
                         ),
                     ],
-                ),
+                ],
             ],
-        )
+        ]
     )
     # TODO add None default to source_group_id
     df_collection["ukrdc"] = df_collection["ukrdc"].with_columns(
@@ -520,12 +556,12 @@ def group_and_reduce_ukrdc_or_rr_dataframe(
     """
 
     df = group_similar_or_overlapping_range(df, ["patient_id", "modality"])
-
-    audit_writer.add_table(
-        """Grouping treatments by modality and patient ID, a treatment can be grouped together if any overlapping 
-        dates exist or dates are within 5 days either side of each other""",
-        df,
-        f"date_range_over_patient_id_modality_{name}",
+    audit_writer.add(
+        Table(
+            text=f"{name} grouped by patient_id and modality",
+            table=df,
+            table_name=f"{name}",
+        )
     )
 
     df = df.with_columns(
@@ -553,11 +589,19 @@ def group_and_reduce_ukrdc_or_rr_dataframe(
             },
         )
     )
-
-    audit_writer.add_table(
-        "Reducing treatments by selecting representative values from each group",
-        df,
-        f"date_range_over_patient_id_modality_reduced_{name}",
+    audit_writer.add(
+        Table(
+            text=f"Reducing {name} to one row per patient_id, modality, and group_id",
+            table=df,
+            table_name=f"reduced_{name}",
+        )
+    )
+    audit_writer.add(
+        Table(
+            text=f"Reducing {name} to one row per patient_id, modality, and group_id",
+            table=df,
+            table_name=f"reduced_{name}",
+        )
     )
 
     return df
@@ -726,13 +770,13 @@ def group_and_reduce_combined_treatment_dataframe(reduced_dataframe: pl.DataFram
             ["patient_id", "source_type", "recent_date", "from_date"],
             descending=True,
         )
-        .group_by(["patient_id", "group_id"])
+        .group_by(["patient_id", "modality", "group_id"])
         .agg(
             pl.col("id").filter(pl.col("id").is_not_null()).first(),
             **{
                 col: pl.col(col).first()
                 for col in reduced_dataframe.columns
-                if col not in ["id", "patient_id", "group_id"]
+                if col not in ["id", "patient_id", "modality", "group_id"]
             },
         )
         .drop("group_id")
@@ -775,6 +819,8 @@ def split_combined_dataframe(
     existing_rows (DataFrame): DataFrame containing rows from 'dataframe' that have corresponding 'id' values in 'full_dataframe'.
     new_rows (DataFrame): DataFrame containing rows from 'dataframe' with 'id' values that are not present in 'full_dataframe' (null ids).
     """
+    full_dataframe = full_dataframe.select(reduced_dataframe.columns)
+
     new_rows = reduced_dataframe.filter(pl.col("id").is_null())
 
     # update treatments should have created_date dropped to not overwrite and should have modified set to current
@@ -785,8 +831,8 @@ def split_combined_dataframe(
             source_type=pl.col("source_type")
             .cast(pl.String)
             .replace(
-                new=["BATCH", "UKRDC", "RADAR", "RR"],
-                old=["0", "1", "2", "3"],
+                new=["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"],
+                old=["0", "1", "2", "3", "4"],
                 default=None,
             )
         ),
@@ -796,17 +842,11 @@ def split_combined_dataframe(
     )
     cols = [col for col in existing_rows.columns if col not in ["id"]]
     existing_rows = temp.filter(mask(cols))
-    existing_rows = existing_rows.select(
-        [
-            col
-            for col in existing_rows.columns
-            if (
-                col == "created_date_old"
-                or not col.endswith("_old")
-                and col not in ["recent_date", "created_date"]
-            )
-        ]
-    ).with_columns(pl.col("created_date_old").alias("created_date"))
+    existing_rows = (
+        existing_rows.select(cols + ["created_date_old"] + ["id"])
+        .with_columns(pl.col("created_date_old").alias("created_date"))
+        .drop("created_date_old")
+    )
     # TODO Double check this
     return existing_rows, new_rows
 
