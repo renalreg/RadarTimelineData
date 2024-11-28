@@ -29,6 +29,7 @@ from radar_timeline_data.audit_writer.audit_writer import (
     Table,
     StubObject,
     WorkSheet,
+    ComparisonTable,
 )
 from radar_timeline_data.audit_writer.audit_writer import List as Li
 from radar_timeline_data.utils.connections import (
@@ -163,6 +164,24 @@ def treatment_run(
 
     existing_treatments, new_treatments = split_combined_dataframe(
         combined_dataframe, reduced_dataframe
+    )
+    audit_writer.add(
+        ComparisonTable(
+            table_sheet="Test",
+            old_tables=[
+                Table(
+                    text="old table",
+                    table=combined_dataframe,
+                    table_name="old",
+                )
+            ],
+            new_table=Table(
+                text="new table",
+                table=existing_treatments,
+                table_name="new",
+            ),
+            common_keys=["patient_id", "modality"],
+        )
     )
 
     audit_writer.add(
@@ -587,13 +606,6 @@ def group_and_reduce_ukrdc_or_rr_dataframe(
                 if col
                 not in ["from_date", "to_date", "patient_id", "modality", "group_id"]
             },
-        )
-    )
-    audit_writer.add(
-        Table(
-            text=f"Reducing {name} to one row per patient_id, modality, and group_id",
-            table=df,
-            table_name=f"reduced_{name}",
         )
     )
     audit_writer.add(

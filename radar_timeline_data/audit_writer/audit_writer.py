@@ -2,7 +2,7 @@ import inspect
 import os
 import random
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, List
 
 import docx
 import polars as pl
@@ -33,6 +33,14 @@ class Table:
     table_name: str
     table: pl.DataFrame
     text: str
+
+
+@dataclass
+class ComparisonTable:
+    table_sheet: str
+    old_tables: list[Table]
+    new_table: Table
+    common_keys: list[str]
 
 
 @dataclass
@@ -315,6 +323,102 @@ class AuditWriter:
             self.info[key] = value
         self.__logger.info(f"{key} : {value}")
 
+    def _comparison_table(self, element: ComparisonTable):
+        def comparison_table(
+            old_tables: pl.DataFrame, new_tables: pl.DataFrame, common_keys
+        ):
+            # Group the old table by common_keys and count the number of rows for each group
+            result_old = old_tables.groupby(common_keys).agg(
+                pl.count().alias("old_count")
+            )
+
+            # Group the new table by common_keys and count the number of rows for each group
+            result_new = new_tables.groupby(common_keys).agg(
+                pl.count().alias("new_count")
+            )
+
+            result = result_old.join(result_new, on=common_keys, how="outer")
+            result = result.with_columns(
+                pl.coalesce([i, i + "_right"]).alias(i) for i in common_keys
+            ).drop(i + "_right" for i in common_keys)
+            result = (
+                result.fill_null(0)
+                .with_columns(
+                    (pl.col("old_count") - pl.col("new_count")).alias("count")
+                )
+                .drop("old_count", "new_count")
+            )
+
+            new_df = pl.DataFrame(schema=new_tables.schema)
+            old_df = pl.DataFrame(schema=old_tables.schema)
+            new_tables = new_tables.sort(common_keys)
+            old_tables = old_tables.sort(common_keys)
+
+            result = result.sort(common_keys)
+            for i in result.iter_rows():
+                *keys, count = i
+
+                # Build the filter condition by combining multiple conditions with `&`
+                filter_condition = (
+                    pl.col(common_keys[0]) == keys[0]  # First key-value comparison
+                )
+                for k, v in zip(common_keys[1:], keys[1:]):
+                    filter_condition = filter_condition & (pl.col(k) == v)
+
+                # Find the rows in new_tables that match the keys
+                new_table_matching_rows = new_tables.filter(filter_condition)
+                old_table_matching_rows = old_tables.filter(filter_condition)
+                # Insert rows based on the count value
+                if count > 0:
+                    # Add `count` blank rows before the matching rows
+                    blank_rows = pl.DataFrame(
+                        {
+                            col: (
+                                [keys[0]] * count
+                                if col == "patient_id"
+                                else [None] * count
+                            )
+                            for col in new_tables.columns
+                        },
+                        schema=new_tables.schema,
+                    )
+                    new_df = pl.concat([new_df, blank_rows, new_table_matching_rows])
+                    old_df = pl.concat([old_df, old_table_matching_rows])
+
+                elif count == 0:
+                    # Add matching rows directly
+                    new_df = pl.concat([new_df, new_table_matching_rows])
+                    old_df = pl.concat([old_df, old_table_matching_rows])
+                elif count < 0:
+                    # Add matching rows first, followed by `-count` blank rows
+                    blank_rows = pl.DataFrame(
+                        {col: [None] * abs(count) for col in old_tables.columns},
+                        schema=old_tables.schema,
+                    )
+                    old_df = pl.concat([old_df, blank_rows, old_table_matching_rows])
+                    new_df = pl.concat([new_df, new_table_matching_rows])
+            return new_df, old_df
+
+        old_tables = [i.table for i in element.old_tables]
+        new_tables = element.new_table
+        common_keys = element.common_keys
+        if isinstance(old_tables, list):
+            old_tables = pl.concat(old_tables)
+        new_df, old_df = comparison_table(old_tables, new_tables.table, common_keys)
+        self.set_ws(element.table_sheet)
+        self.add_table(
+            text=element.old_tables[0].text,
+            table=old_df,
+            table_name=element.old_tables[0].table_name,
+            indent_level=0,
+        )
+        self.add_table(
+            text=element.new_table.text,
+            table=new_df,
+            table_name=element.new_table.table_name,
+            indent_level=0,
+        )
+
     def add_table(
         self, text: str, table: pl.DataFrame, table_name: str, indent_level: int = 0
     ):
@@ -486,6 +590,10 @@ class AuditWriter:
                 table_name=element.table_name,
                 indent_level=indent_level,
             )
+
+        if isinstance(element, ComparisonTable):
+            element: ComparisonTable
+            self._comparison_table(element)
         if isinstance(element, List):
             element: List
             if element.text:
