@@ -1,16 +1,15 @@
 """
 TimeLineData importer script.
 
-This script handles the import and processing of timeline data, including treatment and transplant data.
-
+This script handles the import and processing of timeline data,
+including treatment and transplant data.
 """
 
 from datetime import datetime
-
+import click
 from loguru import logger
 
 from radar_timeline_data import (
-    get_args,
     create_audit,
     calculate_runtime,
     AuditWriter,
@@ -25,20 +24,19 @@ from radar_timeline_data import (
 from radar_timeline_data.audit_writer import Table, List, Heading
 
 
-def main(
+def run(
     audit: AuditWriter,
     commit: bool,
     test_run: bool,
 ) -> None:
     """
-    main function for flow of script
+    Main function for flow of script.
+
     Args:
         audit: Object used for writing readable audit files
-        commit: boolean to indicate whether to commit
-        test_run: boolean to indicate whether to run on test databases
-        max_data_lifetime: maximum age of data
+        commit: Boolean to indicate whether to commit to the server
+        test_run: Boolean to indicate whether to run on test databases
     """
-
     sessions = create_sessions(test_run)
     codes = get_modality_codes(sessions["ukrdc"])
     satellite = get_satellite_map(sessions["ukrdc"])
@@ -92,20 +90,30 @@ def main(
         session.close()
 
 
-if __name__ == "__main__":
-    args = get_args()
-
-    logger.info("script start")
-    logger.info(f"Auditing directory: {args.audit_path}")
+@click.command(help="TimeLineData importer script")
+@click.option(
+    "-ap",
+    "--audit_path",
+    required=True,
+    type=click.Path(exists=True, file_okay=False),
+    help="Directory to store the audit files",
+)
+@click.option("-c", "--commit", is_flag=True, default=False, help="Commit to server")
+@click.option(
+    "-tr", "--test_run", is_flag=True, default=False, help="Run on staging servers"
+)
+def main(audit_path: str, commit: bool, test_run: bool):
+    logger.info("Script start")
+    logger.info(f"Auditing directory: {audit_path}")
 
     start_time = datetime.now()
 
-    audit = create_audit(start_time, args.audit_path)
+    audit = create_audit(start_time, audit_path)
     audit.add_text("starting script", style="Heading 3")
     audit.add_info("time", ("start time", start_time.strftime("%Y-%m-%d %H:%M")))
 
     try:
-        main(audit=audit, commit=args.commit, test_run=args.test_run)
+        run(audit=audit, commit=commit, test_run=test_run)
     except Exception as error:
         audit.add_important(f"{error}", True)
         audit.commit_audit()
@@ -122,5 +130,9 @@ if __name__ == "__main__":
     audit.commit_audit()
 
     logger.success(
-        f"script finished in {hours} hours {minutes} mins {int(seconds)} seconds"
+        f"Script finished in {hours} hours {minutes} mins {int(seconds)} seconds"
     )
+
+
+if __name__ == "__main__":
+    main()
