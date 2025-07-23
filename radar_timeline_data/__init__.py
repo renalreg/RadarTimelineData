@@ -1,9 +1,8 @@
-from radar_timeline_data.audit_writer import AuditWriter
+from radar_timeline_data.audit_writer import AuditWriter, create_audit
 from radar_timeline_data.utils import (
     transplant_run,
     treatment_run,
     get_args,
-    create_audit,
     calculate_runtime,
     create_sessions,
     get_modality_codes,

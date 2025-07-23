@@ -839,7 +839,7 @@ def split_combined_dataframe(
     existing_rows = reduced_dataframe.filter(pl.col("id").is_not_null())
 
     temp = existing_rows.join(
-        full_dataframe.drop("group").with_columns(
+        full_dataframe.with_columns(
             source_type=pl.col("source_type")
             .cast(pl.String)
             .replace(

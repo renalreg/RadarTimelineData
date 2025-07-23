@@ -10,7 +10,6 @@ import click
 from loguru import logger
 
 from radar_timeline_data import (
-    create_audit,
     calculate_runtime,
     AuditWriter,
     create_sessions,
@@ -21,6 +20,7 @@ from radar_timeline_data import (
     treatment_run,
     transplant_run,
 )
+from radar_timeline_data.audit_writer.audit_writer import create_audit
 from radar_timeline_data.audit_writer import Table, List, Heading
 
 

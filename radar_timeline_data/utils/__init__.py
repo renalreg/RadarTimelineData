@@ -6,13 +6,13 @@ from radar_timeline_data.utils.treatments import (
 )
 from radar_timeline_data.utils.utils import (
     get_args,
-    create_audit,
     calculate_runtime,
     check_nulls_in_column,
     max_with_nulls,
     fill_null_time,
     chunk_list,
 )
+from radar_timeline_data.audit_writer.audit_writer import create_audit
 from radar_timeline_data.utils.connections import (
     create_sessions,
     get_modality_codes,
@@ -30,7 +30,6 @@ __all__ = [
     "create_sessions",
     "get_modality_codes",
     "get_satellite_map",
-    "create_audit",
     "calculate_runtime",
     "get_source_group_id_mapping",
     "check_nulls_in_column",

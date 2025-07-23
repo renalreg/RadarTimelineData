@@ -2,8 +2,6 @@ import argparse
 import polars as pl
 from datetime import datetime
 
-from radar_timeline_data import AuditWriter
-
 
 def get_args():
     parser = argparse.ArgumentParser(description="TimeLineData importer script")
@@ -35,18 +33,6 @@ def calculate_runtime(end_time, start_time):
     minutes, seconds = divmod(remainder, 60)
 
     return hours, minutes, seconds
-
-
-def create_audit(start_time, audit_path) -> AuditWriter:
-    audit = AuditWriter(
-        f"{audit_path}",
-        f"rdrTimeLineDataLog-{start_time.strftime('%d-%m-%Y')}",
-        "Radar Timeline Data Log",
-        include_excel=True,
-        include_breakdown=True,
-    )
-
-    return audit
 
 
 def check_nulls_in_column(df, col):

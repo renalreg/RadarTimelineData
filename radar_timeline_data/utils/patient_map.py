@@ -79,7 +79,7 @@ def map_rr_to_indentifier(connection, identifier_list, identifier_type):
     return rr_pats
 
 
-def add_rr_no_to_map(pat_map, rr_pats, identifier):
+def add_rr_no_to_map(pat_map: pl.DataFrame, rr_pats: pl.DataFrame, identifier):
     """
     Add RR number to patient map.
 
@@ -91,7 +91,8 @@ def add_rr_no_to_map(pat_map, rr_pats, identifier):
     Returns:
         DataFrame: Updated patient map with RR number added.
     """
-
+    rr_pats = rr_pats.rename({col: col.lower() for col in rr_pats.columns})
+    rr_pats = rr_pats.with_columns(pl.col(identifier).cast(pl.String).alias(identifier))
     pat_map = pat_map.join(
         rr_pats.select([identifier, "rr_no"]), on=identifier, how="left"
     )
@@ -120,7 +121,7 @@ def make_patient_map(connections) -> pl.DataFrame:
     rr_nhs_map = map_rr_to_indentifier(
         connections["rr"], nhs_list, rr.UKRRPatient.nhs_no
     )
-    rr_nhs_map = rr_nhs_map.rename({"new_nhs_no": "nhs_no"})
+    rr_nhs_map = rr_nhs_map.rename({"NEW_NHS_NO": "NHS_NO"})
 
     rr_chi_map = map_rr_to_indentifier(
         connections["rr"], chi_list, rr.UKRRPatient.chi_no

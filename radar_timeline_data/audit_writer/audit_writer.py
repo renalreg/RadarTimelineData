@@ -20,6 +20,7 @@ from docx.text.paragraph import Paragraph
 from docx.text.run import Run
 from loguru import logger
 from openpyxl.utils import get_column_letter
+from pygments.lexers import q
 
 from radar_timeline_data.audit_writer.stylesheet import (
     stylesheet,
@@ -324,100 +325,71 @@ class AuditWriter:
         self.__logger.info(f"{key} : {value}")
 
     def _comparison_table(self, element: ComparisonTable):
-        def comparison_table(
-            old_tables: pl.DataFrame, new_tables: pl.DataFrame, common_keys
-        ):
-            # Group the old table by common_keys and count the number of rows for each group
-            result_old = old_tables.groupby(common_keys).agg(
-                pl.count().alias("old_count")
+        old_tables = element.old_tables
+        new_table = element.new_table
+
+        for old_table in old_tables:
+            # Rename columns
+            old_prefixed = old_table.table.rename(
+                {
+                    col: f"old_{col}"
+                    for col in old_table.table.columns
+                    if col not in element.common_keys
+                }
+            )
+            new_prefixed = new_table.table.rename(
+                {
+                    col: f"new_{col}"
+                    for col in new_table.table.columns
+                    if col not in element.common_keys
+                }
             )
 
-            # Group the new table by common_keys and count the number of rows for each group
-            result_new = new_tables.groupby(common_keys).agg(
-                pl.count().alias("new_count")
+            # Join on common keys
+            joined = old_prefixed.join(
+                new_prefixed, on=element.common_keys, how="outer"
+            )
+            # Create the combined key column
+            joined = joined.with_columns(
+                [
+                    pl.concat_str(
+                        [pl.col(k).cast(pl.Utf8) for k in element.common_keys]
+                    ).alias("common_keys")
+                ]
             )
 
-            result = result_old.join(result_new, on=common_keys, how="outer")
-            result = result.with_columns(
-                pl.coalesce([i, i + "_right"]).alias(i) for i in common_keys
-            ).drop(i + "_right" for i in common_keys)
-            result = (
-                result.fill_null(0)
-                .with_columns(
-                    (pl.col("old_count") - pl.col("new_count")).alias("count")
-                )
-                .drop("old_count", "new_count")
+            # Compute row number per group (first distinct row per group)
+            joined = joined.with_columns(
+                pl.when(pl.col("common_keys").is_first_distinct())
+                .then(1)
+                .otherwise(0)
+                .alias("__row_number")
             )
 
-            new_df = pl.DataFrame(schema=new_tables.schema)
-            old_df = pl.DataFrame(schema=old_tables.schema)
-            new_tables = new_tables.sort(common_keys)
-            old_tables = old_tables.sort(common_keys)
+            # Get all new_ columns from the new_prefixed table
+            new_cols = [col for col in new_prefixed.columns if col in joined.columns]
 
-            result = result.sort(common_keys)
-            for i in result.iter_rows():
-                *keys, count = i
+            # For each new_ column, keep value only for first row in group
+            joined = joined.with_columns(
+                [
+                    pl.when(pl.col("__row_number") == 1)
+                    .then(pl.col(col))
+                    .otherwise(None)
+                    .alias(col)
+                    for col in new_cols
+                ]
+            )
 
-                # Build the filter condition by combining multiple conditions with `&`
-                filter_condition = (
-                    pl.col(common_keys[0]) == keys[0]  # First key-value comparison
-                )
-                for k, v in zip(common_keys[1:], keys[1:]):
-                    filter_condition = filter_condition & (pl.col(k) == v)
+            # Drop helper columns if desired
+            joined = joined.drop(["common_keys", "__row_number"])
 
-                # Find the rows in new_tables that match the keys
-                new_table_matching_rows = new_tables.filter(filter_condition)
-                old_table_matching_rows = old_tables.filter(filter_condition)
-                # Insert rows based on the count value
-                if count > 0:
-                    # Add `count` blank rows before the matching rows
-                    blank_rows = pl.DataFrame(
-                        {
-                            col: (
-                                [keys[0]] * count
-                                if col == "patient_id"
-                                else [None] * count
-                            )
-                            for col in new_tables.columns
-                        },
-                        schema=new_tables.schema,
-                    )
-                    new_df = pl.concat([new_df, blank_rows, new_table_matching_rows])
-                    old_df = pl.concat([old_df, old_table_matching_rows])
-
-                elif count == 0:
-                    # Add matching rows directly
-                    new_df = pl.concat([new_df, new_table_matching_rows])
-                    old_df = pl.concat([old_df, old_table_matching_rows])
-                elif count < 0:
-                    # Add matching rows first, followed by `-count` blank rows
-                    blank_rows = pl.DataFrame(
-                        {col: [None] * abs(count) for col in old_tables.columns},
-                        schema=old_tables.schema,
-                    )
-                    old_df = pl.concat([old_df, blank_rows, old_table_matching_rows])
-                    new_df = pl.concat([new_df, new_table_matching_rows])
-            return new_df, old_df
-
-        old_tables = [i.table for i in element.old_tables]
-        new_tables = element.new_table
-        common_keys = element.common_keys
-        if isinstance(old_tables, list):
-            old_tables = pl.concat(old_tables)
-        new_df, old_df = comparison_table(old_tables, new_tables.table, common_keys)
-        self.set_ws(element.table_sheet)
-        self.add_table(
-            text=element.old_tables[0].text,
-            table=old_df,
-            table_name=element.old_tables[0].table_name,
-            indent_level=0,
-        )
-        self.add_table(
-            text=element.new_table.text,
-            table=new_df,
-            table_name=element.new_table.table_name,
-            indent_level=0,
-        )
+            self.set_ws(element.table_sheet)
+            self.add_table(
+                text=element.old_tables[0].text,
+                table=joined,
+                table_name=element.new_table.table_name,
+                indent_level=0,
+            )
 
     def add_table(
         self, text: str, table: pl.DataFrame, table_name: str, indent_level: int = 0
@@ -749,3 +721,15 @@ class StubObject:
 
     def _stub_callable(self, *args, **kwargs):
         return self
+
+
+def create_audit(start_time, audit_path) -> AuditWriter:
+    audit = AuditWriter(
+        f"{audit_path}",
+        f"rdrTimeLineDataLog-{start_time.strftime('%d-%m-%Y')}",
+        "Radar Timeline Data Log",
+        include_excel=True,
+        include_breakdown=True,
+    )
+
+    return audit
