@@ -220,7 +220,7 @@ def transplant_run(
         pl.lit(1).alias(column(radar.Transplant.modified_user_id)),
     )
 
-    # TODO this needs checking
+    # TODO: ANDY the above are setting to 1 currenlty is there a specifc user code that i Should use or create to aid in tracking this
     # Identify rows where any column has updated values
 
     audit_writer.add_table(
