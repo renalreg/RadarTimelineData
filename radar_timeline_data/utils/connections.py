@@ -5,16 +5,20 @@ import ukrdc_sqla.ukrdc as ukrdc
 import ukrr_models.nhsbt_models as nhsbt
 from rr_connection_manager import SQLServerConnection
 from rr_connection_manager.classes.postgres_connection import PostgresConnection
-from sqlalchemy import FromClause, String, cast, select
+from sqlalchemy import FromClause, String, cast, select, text, inspect
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
+from ukrdc_sqla.ukrdc import column_names
+
+from radar_timeline_data.utils.config import override_dict
+from radar_timeline_data.utils.utils import sqla_to_polars_schema
 
 
 @retry(
@@ -22,7 +26,7 @@ from tenacity import (
     wait=wait_exponential(multiplier=1, min=4, max=10),
     retry=retry_if_exception_type(sqlalchemy.exc.TimeoutError),
 )
-def get_data_as_df(session, query) -> pl.DataFrame:
+def get_data_as_df(session, query, model=None) -> pl.DataFrame:
     """
     Retrieves data from the database using the provided query and returns it as a Polars DataFrame.
 
@@ -33,24 +37,14 @@ def get_data_as_df(session, query) -> pl.DataFrame:
     - Polars DataFrame containing the result of the query
     """
     # TODO convert to database uri
+    schema = override_dict
+    if model is not None:
+        schema = sqla_to_polars_schema(model)
+
     return pl.read_database(
         query,
         connection=session.bind,
-        schema_overrides={
-            "externalid": pl.String,
-            "donor_hla": pl.String,
-            "recipient_hla": pl.String,
-            "graft_loss_cause": pl.String,
-            "date_of_cmv_infection": pl.Date,
-            "date": pl.Date,
-            "date_of_failure": pl.Date,
-            "date_of_recurrence": pl.Date,
-            "chi_no": pl.String,
-            "hsc_no": pl.String,
-            "new_nhs_no": pl.String,
-            "radar_id": pl.String,
-            "rr_no": pl.String,
-        },
+        schema_overrides=schema,
     )
 
 
@@ -165,53 +159,79 @@ def get_source_group_id_mapping(session: Session) -> pl.DataFrame:
     return get_data_as_df(session, query)
 
 
-def df_batch_insert_to_sql(
+def df_insert_to_sql(
     dataframe: pl.DataFrame,
     session: Session,
-    table: FromClause,
-    batch_size: int,
-    primary_key: str,
+    table: str,
 ):
-    """
-    Upsert a DataFrame into a specified SQLAlchemy table.
+    conn = session.connection()
 
-    Parameters:
-    dataframe (pl.DataFrame): The DataFrame to upsert.
-    session (sqlalchemy.orm.Session): The SQLAlchemy session to use for the operation.
-    table (sqlalchemy.Table.__table__): ?.
+    try:
+        session.rollback()
+        session.begin()
 
-    Returns:
-    rows_total, rows_failed (int, list[dict[str, Any]])
-    """
-    # Convert the DataFrame to a list of dictionaries
-    rows_total = 0
-    rows_failed = []
-    for start in range(0, len(dataframe), batch_size):
-        end = start + batch_size
-        batch = dataframe.slice(start, end)
-        batch_null = batch.filter(pl.col(primary_key).is_null()).drop([primary_key])
-        batch_id = batch.filter(pl.col(primary_key).is_not_null())
-        print(batch_null.to_dicts() + batch_id.to_dicts())
-        data = batch_null.to_dicts() + batch_id.to_dicts()
-        print(data)
-        try:
-            # Create an insert statement
-            # TODO check that this may work radar.Transplant
-            stmt = insert(table).values(data)  # type : ignore
+        # Count existing rows before insert
+        total_before = conn.execute(text("SELECT COUNT(*) FROM transplants;")).scalar()
 
-            # Define the update action on conflict
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[primary_key],  # Specify the primary key column(s)
-                set_={
-                    col: stmt.excluded[col] for col in data[0].keys()
-                },  # Update all columns
+        # Insert dataframe using Polars
+        dataframe.write_database(
+            table_name=table,
+            if_table_exists="append",
+            connection=conn,
+        )
+        # Count rows after insert
+        total_after = conn.execute(text("SELECT COUNT(*) FROM transplants;")).scalar()
+
+        inserted = total_after - total_before
+
+        # Validate
+        if inserted != dataframe.height:
+            raise SQLAlchemyError(
+                f"Inserted {inserted} rows but dataframe has {dataframe.height}"
             )
-        except SQLAlchemyError as e:
-            rows_failed.extend(data)
 
-        # Execute the statement and commit the transaction
-        result = session.execute(stmt)
-        rows_total += result.rowcount
         session.commit()
 
-    return rows_total, rows_failed
+        return inserted
+
+    except Exception as e:
+        # Rollback on any error
+        session.rollback()
+        raise e
+
+
+def df_batch_update_to_sql(
+    dataframe: pl.DataFrame,
+    session: Session,
+    table_model,
+    batch_size: int = 1000,
+):
+    # Convert to dict rows
+    df_rows = dataframe.to_dicts()
+
+    # Ensure only valid table columns are included
+    mapper = inspect(table_model)
+    valid_columns = {col.key for col in mapper.columns}
+
+    # Split into batches
+    batches = [df_rows[i : i + batch_size] for i in range(0, len(df_rows), batch_size)]
+
+    total_updated = 0
+
+    try:
+        for batch in batches:
+            # Filter each row so SQLAlchemy only sees valid columns
+            clean_batch = [
+                {k: v for k, v in row.items() if k in valid_columns} for row in batch
+            ]
+
+            # Perform bulk update
+            session.bulk_update_mappings(table_model, clean_batch)
+            total_updated += len(clean_batch)
+
+        session.commit()
+        return total_updated
+
+    except Exception as e:
+        session.rollback()
+        raise e

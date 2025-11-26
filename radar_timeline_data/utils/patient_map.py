@@ -74,7 +74,7 @@ def map_rr_to_indentifier(connection, identifier_list, identifier_type):
             identifier_type.in_(chunk),
         )
 
-        df_chunk = get_data_as_df(connection, rr_nhs_query)
+        df_chunk = get_data_as_df(connection, rr_nhs_query, [rr.UKRRPatient])
         rr_pats = pl.concat([rr_pats, df_chunk])
     return rr_pats
 
@@ -108,11 +108,15 @@ def add_rr_no_to_map(pat_map: pl.DataFrame, rr_pats: pl.DataFrame, identifier):
 
 
 def make_patient_map(connections) -> pl.DataFrame:
-    radar_pats: pl.DataFrame = get_data_as_df(connections["radar"], radar_pat_query)
-    ukrdc_pats: pl.DataFrame = get_data_as_df(connections["ukrdc"], ukrdc_pat_query)
-    pat_map = radar_pats.join(
-        ukrdc_pats, left_on="radar_id", right_on="radar_id", how="left"
+    pat_map: pl.DataFrame = get_data_as_df(
+        connections["radar"],
+        radar_pat_query,
+        [radar.PatientNumber, radar.PatientDemographic],
     )
+    # ukrdc_pats: pl.DataFrame = get_data_as_df(connections["ukrdc"], ukrdc_pat_query)
+    # pat_map = radar_pats.join(
+    #    ukrdc_pats, left_on="radar_id", right_on="radar_id", how="left"
+    # )
 
     nhs_list = pat_map["nhs_no"].drop_nulls().to_list()
     chi_list = pat_map["chi_no"].drop_nulls().to_list()

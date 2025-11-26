@@ -1,6 +1,18 @@
 import argparse
-import polars as pl
 from datetime import datetime
+
+import polars as pl
+from sqlalchemy import (
+    Date,
+    DateTime,
+    Float,
+    Integer,
+    Numeric,
+    String,
+    inspect,
+)
+
+from radar_timeline_data.utils.config import override_dict
 
 
 def get_args():
@@ -72,3 +84,58 @@ def fill_null_time(added_rows, update_rows) -> tuple[pl.DataFrame, pl.DataFrame]
 def chunk_list(lst, chunk_size):
     for i in range(0, len(lst), chunk_size):
         yield lst[i : i + chunk_size]
+
+
+def sqla_to_polars_schema(models):
+    """
+    Generates a polars schema from SQLAlchemy models.
+
+    Parameters:
+    models (list): List of SQLAlchemy ORM models to include in the schema.
+
+    Returns:
+        dict: A dictionary with column names as keys and polars data types as values.
+    """
+    SQLALCHEMY_TO_POLARS_TYPE = {
+        Integer: pl.Int32,
+        Float: pl.Float64,
+        String: pl.Utf8,
+        DateTime: pl.Datetime,
+        Date: pl.Date,
+    }
+    schema = {}
+
+    for model in models:
+        mapper = inspect(model)
+
+        for column in mapper.columns:
+            col_name = column.name
+            col_type = type(column.type)
+
+            # Check for Numeric type with precision and scale
+            if isinstance(column.type, Numeric):
+                # Extract precision and scale from Numeric type
+                precision, scale = column.type.precision, column.type.scale
+                if precision and scale is not None:
+                    # Map to pl.Decimal with the same precision and scale
+                    pl_type = pl.Decimal(precision, scale)
+                else:
+                    # Default to pl.Float64 if no precision/scale is specified
+                    pl_type = pl.Float64
+            else:
+                # Use the default mapping for other types
+                pl_type = SQLALCHEMY_TO_POLARS_TYPE.get(col_type, pl.Utf8)
+
+            # Add column name and type to the schema
+            schema[col_name] = pl_type
+
+    overrides = override_dict
+    schema = {
+        **schema,  # original types
+        **overrides,  # override types (added or replaced)
+        **{
+            k.upper(): v for k, v in overrides.items()
+        },  # where key is in capitals instead
+    }
+
+    return schema
