@@ -12,9 +12,9 @@ from sqlalchemy.orm import Session
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
 from radar_timeline_data.utils.config import rr_to_radar_columns
 from radar_timeline_data.utils.connections import (
-    df_batch_insert_to_sql,
     get_data_as_df,
     df_batch_update_to_sql,
+    df_insert_to_sql,
 )
 from radar_timeline_data.utils.utils import chunk_list
 from ukrdc_sqla.ukrdc import column_names as column
@@ -266,11 +266,10 @@ def transplant_run(
     # =====================< WRITE TO DATABASE >==================
     if commit:
         audit_writer.add_text("Writing Transplant data to database")
-        new_total_rows = df_batch_insert_to_sql(
+        new_total_rows = df_insert_to_sql(
             new_transplant_rows,
             sessions["radar"],
             radar.Transplant.__tablename__,
-            1000,
         )
         updated_total_rows = df_batch_update_to_sql(
             updated_transplant_rows,
