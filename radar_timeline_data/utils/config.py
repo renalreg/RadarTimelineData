@@ -31,3 +31,6 @@ rr_to_radar_columns = {
     col(UKTTransplant.hla_mismatch): col(radar.Transplant.mismatch_hla),
     col(UKTSites.rr_code): col(radar.Transplant.source_group_id),
 }
+
+# this is to be used to mark rows imported by this script
+user_id = 2391

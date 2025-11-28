@@ -10,7 +10,7 @@ from sqlalchemy import select, cast, String, Date
 from sqlalchemy.orm import Session
 
 from radar_timeline_data.audit_writer.audit_writer import AuditWriter, StubObject
-from radar_timeline_data.utils.config import rr_to_radar_columns
+from radar_timeline_data.utils.config import rr_to_radar_columns, user_id
 from radar_timeline_data.utils.connections import (
     get_data_as_df,
     df_batch_update_to_sql,
@@ -43,7 +43,7 @@ def filter_updated(radar_df: DataFrame, updated_transplant_rows):
     # 4. Drop the original comparison columns to return to clean format
     truly_updated_rows = truly_updated_rows.select(updated_transplant_rows.columns)
 
-    # TODO: ANDY this currently removes unchanged rows this means if sourcetype diffrences can overwrite
+    # TODO: ANDY this currently removes unchanged rows this means if sourcetype differences can overwrite
     # ie same row different source type should we include this or should it be removed?
 
     return truly_updated_rows
@@ -103,7 +103,6 @@ def transplant_run(
     audit_writer.add_text("Grouping and Reducing RR transplants")
     audit_writer.set_ws("reduced")
 
-    # TODO: ANDY this commented code Groups transplant records that occur within 5 days of each other,Ensures grouping is done per patient and modality should this be kept
     # df_collection = group_and_reduce_transplant_rr(audit_writer, df_collection)
     # audit_writer.add_table(
     #    "each group within patient_id and modality combinations have been reduced to one row per group",
@@ -204,8 +203,8 @@ def transplant_run(
         all_transplants.filter(pl.col(column(radar.Transplant.id)).is_null())
         .drop(column(radar.Transplant.id))
         .with_columns(
-            pl.lit(1).alias(column(radar.Transplant.created_user_id)),
-            pl.lit(1).alias(column(radar.Transplant.modified_user_id)),
+            pl.lit(user_id).alias(column(radar.Transplant.created_user_id)),
+            pl.lit(user_id).alias(column(radar.Transplant.modified_user_id)),
         )
     )
 
@@ -216,11 +215,9 @@ def transplant_run(
     updated_transplant_rows = filter_updated(
         df_collection["radar"], updated_transplant_rows
     ).with_columns(
-        pl.lit(1).alias(column(radar.Transplant.created_user_id)),
-        pl.lit(1).alias(column(radar.Transplant.modified_user_id)),
+        pl.lit(user_id).alias(column(radar.Transplant.modified_user_id)),
     )
 
-    # TODO: ANDY the above are setting to 1 currenlty is there a specifc user code that i Should use or create to aid in tracking this
     # Identify rows where any column has updated values
 
     audit_writer.add_table(
@@ -435,7 +432,6 @@ def format_rr_transplants(
         )
         .cast(pl.Int64)
     )
-    # TODO add a check here
 
     # convert transplant unit to radar int code
     df_collection = convert_transplant_unit(df_collection, sessions)
@@ -448,7 +444,7 @@ def format_rr_transplants(
         .with_columns(
             pl.lit(124).alias(column(radar.Transplant.source_group_id)),
             pl.lit("RR").alias(column(radar.Transplant.source_type)),
-        )  # TODO: ANDY not sure why im setting source group to 200, should it be missing values set to 200?
+        )
     )
     return df_collection
 
