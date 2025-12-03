@@ -70,9 +70,9 @@ def test_single_modality_and_patient(
     assert df["from_date"][0] == from_date.min()
 
     # Step 5: Check that to_date equals the maximum of the input `to_date`
-    assert (
-        df["to_date"][0] == to_date.max()
-    ), f"Expected to_date to be {max(to_date)}, got {df['to_date'][0]}"
+    assert df["to_date"][0] == to_date.max(), (
+        f"Expected to_date to be {max(to_date)}, got {df['to_date'][0]}"
+    )
 
 
 def test_multiple_modality_and_one_patient():

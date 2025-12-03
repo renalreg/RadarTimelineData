@@ -167,9 +167,6 @@ def df_insert_to_sql(
     conn = session.connection()
 
     try:
-        session.rollback()
-        session.begin()
-
         # Count existing rows before insert
         total_before = conn.execute(text("SELECT COUNT(*) FROM transplants;")).scalar()
 

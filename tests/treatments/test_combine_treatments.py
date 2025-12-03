@@ -240,9 +240,9 @@ def test_missing_columns():
         assert False, "This should raise an error due to missing columns."
     except Exception as e:
         print(e)
-        assert isinstance(
-            e, ColumnNotFoundError
-        ), "Expected KeyError for missing 'to_date' column."
+        assert isinstance(e, ColumnNotFoundError), (
+            "Expected KeyError for missing 'to_date' column."
+        )
 
 
 def test_invalid_data_types():
@@ -271,6 +271,6 @@ def test_invalid_data_types():
         df: pl.DataFrame = group_and_reduce_combined_treatment_dataframe(df)
         assert False, "This should raise an error due to invalid date types."
     except Exception as e:
-        assert isinstance(
-            e, ComputeError
-        ), "Expected ValueError for invalid date types."
+        assert isinstance(e, ComputeError), (
+            "Expected ValueError for invalid date types."
+        )

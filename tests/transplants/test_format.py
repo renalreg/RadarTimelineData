@@ -16,7 +16,6 @@ def test_process_valid_modalities(monkeypatch, total):
         # Override the return value of `convert_transplant_unit`.
         return unit  # Mocked value, can be anything you want
 
-    a = plsqla(Patient.occupation_code, Patient.pid)
     # Use monkeypatch to replace the real `convert_transplant_unit` with the mock version.
     monkeypatch.setattr(
         "radar_timeline_data.utils.transplants.convert_transplant_unit",

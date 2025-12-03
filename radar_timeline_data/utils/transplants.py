@@ -263,20 +263,26 @@ def transplant_run(
     # =====================< WRITE TO DATABASE >==================
     if commit:
         audit_writer.add_text("Writing Transplant data to database")
-        new_total_rows = df_insert_to_sql(
-            new_transplant_rows,
-            sessions["radar"],
-            radar.Transplant.__tablename__,
-        )
-        updated_total_rows = df_batch_update_to_sql(
-            updated_transplant_rows,
-            sessions["radar"],
-            radar.Transplant,
-            1000,
-        )
+        if new_transplant_rows.height > 0:
+            new_total_rows = df_insert_to_sql(
+                new_transplant_rows,
+                sessions["radar"],
+                radar.Transplant.__tablename__,
+            )
+        else:
+            new_total_rows = 0
+        if updated_transplant_rows.height > 0:
+            updated_total_rows = df_batch_update_to_sql(
+                updated_transplant_rows,
+                sessions["radar"],
+                radar.Transplant,
+                1000,
+            )
+        else:
+            updated_total_rows = 0
 
         audit_writer.add_text(
-            f"{new_total_rows+updated_total_rows} rows of transplant data added or modified"
+            f"{new_total_rows + updated_total_rows} rows of transplant data added or modified"
         )
 
 
@@ -379,7 +385,7 @@ def group_and_reduce_transplant_rr(
     )
     df_collection["rr"] = df_collection["rr"].with_columns(
         pl.col("group_id")
-        .cumsum()
+        .cum_sum()
         .rle_id()
         .over("patient_id", "modality")
         .alias("group_id")
@@ -392,7 +398,7 @@ def group_and_reduce_transplant_rr(
 
     df_collection["rr"] = (
         df_collection["rr"]
-        .groupby(["patient_id", "modality", "group_id"])
+        .group_by(["patient_id", "modality", "group_id"])
         .agg(
             **{
                 col: pl.col(col).first()

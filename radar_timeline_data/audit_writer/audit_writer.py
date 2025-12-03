@@ -290,7 +290,7 @@ class AuditWriter:
         """
         paragraph = self.document.add_paragraph()
         self.__set_paragraph_spacing(paragraph, 0, 0)
-        run = paragraph.add_run("\u26A0")
+        run = paragraph.add_run("\u26a0")
         run.font.highlight_color = WD_COLOR_INDEX.GRAY_25
         self.__format_run(run, Pt(16), (204, 51, 0)) if severity else self.__format_run(
             run, Pt(16), (255, 204, 0)
@@ -601,11 +601,11 @@ class AuditWriter:
             return
 
         paragraph = self.document.paragraphs[1].insert_paragraph_before()
-        run = paragraph.add_run("\u26A0")
+        run = paragraph.add_run("\u26a0")
         self.__format_run(run, Pt(16), (255, 204, 0))
         paragraph.add_run(f" {str(self.important_Low)} Warnings raised \n")
 
-        run = paragraph.add_run("\u26A0")
+        run = paragraph.add_run("\u26a0")
         self.__format_run(run, Pt(16), (204, 51, 0))
         paragraph.add_run(f" {str(self.important_High)} Issues raised \n")
 
