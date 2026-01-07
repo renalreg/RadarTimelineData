@@ -45,7 +45,6 @@ dev = [
 
 [tool.uv.sources]
 radar-models = { git = "https://github.com/renalreg/radar-models.git" }
-ursus = { git = "https://github.com/renalreg/Ursus.git" }
 ukrdc-sqla = { git = "https://github.com/renalreg/ukrdc-sqla.git"}
 
 [project.scripts]
