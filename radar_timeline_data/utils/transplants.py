@@ -1,3 +1,4 @@
+from datetime import datetime
 from functools import reduce
 from operator import or_
 
@@ -216,6 +217,9 @@ def transplant_run(
         df_collection["radar"], updated_transplant_rows
     ).with_columns(
         pl.lit(user_id).alias(column(radar.Transplant.modified_user_id)),
+        pl.lit(datetime.now(), pl.Datetime).alias(
+            column(radar.Transplant.modified_date)
+        ),
     )
 
     # Identify rows where any column has updated values
@@ -334,7 +338,7 @@ def make_transplant_dfs(
                 nhsbt.UKTTransplant.transplant_type,
                 nhsbt.UKTTransplant.transplant_date,
                 nhsbt.UKTTransplant.ukt_fail_date,
-                nhsbt.UKTTransplant.hla_mismatch,  # Uncomment when added to radar
+                nhsbt.UKTTransplant.hla_mismatch,
                 nhsbt.UKTTransplant.transplant_relationship,
                 nhsbt.UKTTransplant.transplant_sex,
                 nhsbt.UKTSites.rr_code,
