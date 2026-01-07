@@ -38,10 +38,10 @@ def run(
         test_run: Boolean to indicate whether to run on test databases
     """
     sessions = create_sessions(test_run)
-    codes = get_modality_codes(sessions["ukrdc"])
-    satellite = get_satellite_map(sessions["ukrdc"])
+    # codes = get_modality_codes(sessions["ukrdc"])
+    # satellite = get_satellite_map(sessions["ukrdc"])
     radar_patient_id_map = make_patient_map(sessions)
-    source_group_id_mapping = get_source_group_id_mapping(sessions["radar"])
+    # source_group_id_mapping = get_source_group_id_mapping(sessions["radar"])
 
     audit.set_ws(worksheet_name="Data_Mapping_Overview")
     audit.add(
@@ -49,38 +49,23 @@ def run(
             Heading("Preprocessing and Data Mapping", "Heading 4"),
             [
                 Table(
-                    text="retrieved modality codes from ukrdc",
-                    table=codes,
-                    table_name="UKRDC_modality_codes",
-                ),
-                Table(
-                    text="retrieved unit codes from ukrdc",
-                    table=satellite,
-                    table_name="UKRDC_unit_codes",
-                ),
-                Table(
                     text="Generated patient mapping across databases",
                     table=radar_patient_id_map,
                     table_name="Patient_number_map",
-                ),
-                Table(
-                    text="Mapped source group IDs to corresponding codes",
-                    table=source_group_id_mapping,
-                    table_name="Source_group_id_map",
                 ),
             ],
         )
     )
 
-    treatment_run(
-        audit,
-        codes,
-        satellite,
-        sessions,
-        radar_patient_id_map,
-        source_group_id_mapping,
-        commit,
-    )
+    # treatment_run(
+    #     audit,
+    #     codes,
+    #     satellite,
+    #     sessions,
+    #     radar_patient_id_map,
+    #     source_group_id_mapping,
+    #     commit,
+    # )
 
     transplant_run(audit, sessions, radar_patient_id_map, commit)
 

@@ -33,7 +33,6 @@ from radar_timeline_data.audit_writer.audit_writer import (
 )
 from radar_timeline_data.audit_writer.audit_writer import List as Li
 from radar_timeline_data.utils.connections import (
-    df_batch_insert_to_sql,
     get_data_as_df,
 )
 from radar_timeline_data.utils.utils import (
@@ -223,9 +222,9 @@ def treatment_run(
     # =====================< WRITE TO DATABASE >==================
     if commit:
         audit_writer.add("Starting data commit.")
-        total_rows, failed_rows = df_batch_insert_to_sql(
-            new_treatments, sessions["radar"], radar.Dialysi.__table__, 1000, "id"
-        )
+        # total_rows, failed_rows = df_batch_insert_to_sql(
+        #    new_treatments, sessions["radar"], radar.Dialysi.__table__, 1000, "id"
+        # )
         audit_writer.add(f"{total_rows} rows of treatment data added or modified")
 
         if len(failed_rows) > 0:

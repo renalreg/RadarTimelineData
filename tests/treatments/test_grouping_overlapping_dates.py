@@ -179,7 +179,5 @@ def test_null_from_dates(base_date):
 
     expected_df_with_override = df.sort(
         ["from_date", "to_date"], descending=[False, True]
-    ).with_columns(
-        pl.Series("group_id", list(range(10)))
-    )  # Group ID based on index
+    ).with_columns(pl.Series("group_id", list(range(10))))  # Group ID based on index
     assert result_with_override.frame_equal(expected_df_with_override)

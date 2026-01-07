@@ -1,9 +1,12 @@
 import random
+from typing import Union, List, Tuple
 
 import pytest
 import polars as pl
+from sqlalchemy.orm import InstrumentedAttribute
 
-from radar_timeline_data.utils.transplants import format_transplant
+from radar_timeline_data.utils.transplants import format_rr_transplants
+from ukrdc_sqla.ukrdc import Patient
 
 
 @pytest.mark.parametrize("total", [10, 50, 100, 1000])
@@ -59,7 +62,7 @@ def test_process_valid_modalities(monkeypatch, total):
     }
 
     before = df_collection["rr"]
-    result = format_transplant(df_collection, rr_map, sessions)["rr"]
+    result = format_rr_transplants(df_collection, rr_map, sessions)["rr"]
     assert result.filter(pl.col("modality").is_null()).shape[0] == 0
     assert result.filter(pl.col("modality").is_not_null()).shape[0] == total
 
