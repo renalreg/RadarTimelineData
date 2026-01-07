@@ -38,7 +38,7 @@ dev = [
     "pytest-cov>=4.0.0,<5",
     "ruff>=0.12.4",
     "tox-uv>=1.25.0",
-    "ursus",
+    "ursus @ git+ssh://git@github.com/renalreg/Ursus.git",
 ]
 
 [tool.uv]
@@ -50,6 +50,9 @@ ukrdc-sqla = { git = "https://github.com/renalreg/ukrdc-sqla.git"}
 
 [project.scripts]
 timeline = "scripts.main:main"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.sdist]
 include = ["radar_timeline_data"]
