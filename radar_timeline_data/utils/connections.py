@@ -168,7 +168,9 @@ def df_insert_to_sql(
 
     try:
         # Count existing rows before insert
-        total_before = conn.execute(text("SELECT COUNT(*) FROM transplants;")).scalar()
+        total_before = (
+            conn.execute(text("SELECT COUNT(*) FROM transplants;")).scalar() or 0
+        )
 
         # Insert dataframe using Polars
         dataframe.write_database(
@@ -177,7 +179,9 @@ def df_insert_to_sql(
             connection=conn,
         )
         # Count rows after insert
-        total_after = conn.execute(text("SELECT COUNT(*) FROM transplants;")).scalar()
+        total_after = (
+            conn.execute(text("SELECT COUNT(*) FROM transplants;")).scalar() or 0
+        )
 
         inserted = total_after - total_before
 

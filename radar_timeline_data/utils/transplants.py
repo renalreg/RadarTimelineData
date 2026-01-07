@@ -71,39 +71,15 @@ def transplant_run(
         ValueError: If source_type or patient_id fails sanity checks.
     """
 
-    df_collection = make_transplant_dfs(sessions, radar_patient_id_map)
+    df_collection = make_transplant_dfs(sessions, radar_patient_id_map, audit_writer)
 
-    audit_writer.add_text("Transplant Process", "Heading 3")
-    audit_writer.add_info(
-        "transplant", ("rr data loaded", str(len(df_collection["rr"])))
-    )
-    audit_writer.add_info(
-        "transplant", ("radar data loaded", str(len(df_collection["radar"])))
-    )
-    audit_writer.set_ws("import_transplant_run")
-
-    for key, value in df_collection.items():
-        audit_writer.add_table(
-            text=f"Imported {key} transplants",
-            table=value,
-            table_name=f"raw_transplant_{key}",
-        )
-    audit_writer.add_text(
-        "Converting RR transplants into common formats, includes patient numbers and modality codes "
+    df_collection = format_rr_transplants(
+        df_collection, radar_patient_id_map, sessions, audit_writer
     )
 
-    df_collection = format_rr_transplants(df_collection, radar_patient_id_map, sessions)
-
-    audit_writer.set_ws("transplant_format")
-    audit_writer.add_table(
-        "RR transplants with radar format ",
-        df_collection["rr"],
-        "format_rr_table",
-    )
-
-    audit_writer.add_text("Grouping and Reducing RR transplants")
-    audit_writer.set_ws("reduced")
-
+    # this was part of old code that was more time based
+    # audit_writer.add_text("Grouping and Reducing RR transplants")
+    # audit_writer.set_ws("reduced")
     # df_collection = group_and_reduce_transplant_rr(audit_writer, df_collection)
     # audit_writer.add_table(
     #    "each group within patient_id and modality combinations have been reduced to one row per group",
@@ -111,148 +87,12 @@ def transplant_run(
     #   "reduced_rr_transplants",
     # )
 
-    audit_writer.add_text("Transplants in RR and RADAR are merged")
-    audit_writer.set_ws("combined_transplants")
+    all_transplants = merge_rr_and_radar(audit_writer, df_collection)
 
-    filtered_rr_to_radar = {
-        k: v
-        for k, v in rr_to_radar_columns.items()
-        if v not in df_collection["rr"].columns
-    }
+    all_transplants = reduce_and_prioritise_transplants(all_transplants, audit_writer)
 
-    # adjust any column names before merging
-    df_collection["rr"] = df_collection["rr"].rename(filtered_rr_to_radar)
-    common_cols = [
-        col
-        for col in df_collection["radar"].columns
-        if col in df_collection["rr"].columns
-    ]
-
-    df_collection["rr"] = df_collection["rr"].select(common_cols)
-
-    all_transplants = pl.concat(
-        [df_collection["radar"], df_collection["rr"]], how="diagonal_relaxed"
-    )
-
-    audit_writer.add_table(
-        "transplants from radar and rr have been combined into one table",
-        all_transplants,
-        "all_transplants",
-    )
-
-    audit_writer.add_text(
-        "Grouping and Reducing all Transplants by grouping overlapping transplants within 5 days, "
-        "prioritising data sources and aggregating essential patient and group information"
-    )
-
-    # 1. Convert source_type into numeric priority
-    all_transplants = all_transplants.with_columns(
-        pl.col("source_type")
-        .replace(
-            old=["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"],
-            new=["0", "1", "2", "3", "4"],
-        )
-        .cast(pl.Int32)
-    )
-
-    # 2. Sort so highest priority (largest number) comes first
-    all_transplants = all_transplants.sort(
-        ["patient_id", "modality", "date", "source_type"],
-        descending=[False, False, False, True],  # Only priority sorted descending
-    )
-
-    # 3. Group by patient, modality, date and select highest-priority row
-    all_transplants = all_transplants.group_by(
-        column(
-            [
-                radar.Transplant.patient_id,
-                radar.Transplant.modality,
-                radar.Transplant.date,
-            ]
-        ),
-        maintain_order=True,
-    ).agg(
-        pl.col("id").drop_nulls().first(),  # best ID
-        **{
-            col: pl.col(col).first()
-            for col in all_transplants.columns
-            if col
-            not in column(
-                [
-                    radar.Transplant.patient_id,
-                    radar.Transplant.modality,
-                    radar.Transplant.date,
-                    radar.Transplant.id,
-                ]
-            )
-        },
-    )
-
-    # 4. Convert source_type back to text labels
-    all_transplants = all_transplants.with_columns(
-        pl.col(column(radar.Transplant.source_type))
-        .cast(pl.String)
-        .replace(
-            old=["0", "1", "2", "3", "4"],
-            new=["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"],
-        )
-    )
-
-    # =====================< CHECK for Changes  >==================
-
-    new_transplant_rows = (
-        all_transplants.filter(pl.col(column(radar.Transplant.id)).is_null())
-        .drop(column(radar.Transplant.id))
-        .with_columns(
-            pl.lit(user_id).alias(column(radar.Transplant.created_user_id)),
-            pl.lit(user_id).alias(column(radar.Transplant.modified_user_id)),
-        )
-    )
-
-    updated_transplant_rows = all_transplants.filter(
-        pl.col(column(radar.Transplant.id)).is_not_null()
-    )
-
-    updated_transplant_rows = filter_updated(
-        df_collection["radar"], updated_transplant_rows
-    ).with_columns(
-        pl.lit(user_id).alias(column(radar.Transplant.modified_user_id)),
-        pl.lit(datetime.now(), pl.Datetime).alias(
-            column(radar.Transplant.modified_date)
-        ),
-    )
-
-    # Identify rows where any column has updated values
-
-    audit_writer.add_table(
-        "reduced transplants", all_transplants, "reduced_transplant_data"
-    )
-    audit_writer.set_ws("transplant_output")
-    audit_writer.add_table(
-        "new transplants",
-        new_transplant_rows,
-        "new_transplant_data",
-    )
-    audit_writer.add_table(
-        "updated transplants",
-        updated_transplant_rows,
-        "updated_transplant_data",
-    )
-
-    audit_writer.add_info(
-        "transplants out",
-        (
-            "total to update/create:",
-            str(len(new_transplant_rows) + len(updated_transplant_rows)),
-        ),
-    )
-    audit_writer.add_info(
-        "transplants out",
-        ("total transplants to update", str(len(updated_transplant_rows))),
-    )
-    audit_writer.add_info(
-        "transplants out",
-        ("total transplants to create", str(len(new_transplant_rows))),
+    new_transplant_rows, updated_transplant_rows = split_new_vs_updated(
+        all_transplants, df_collection, audit_writer
     )
 
     # =====================< SANITY CHECKS  >==================
@@ -290,8 +130,163 @@ def transplant_run(
         )
 
 
+def split_new_vs_updated(all_transplants, df_collection, audit_writer):
+    new_transplant_rows = (
+        all_transplants.filter(pl.col(column(radar.Transplant.id)).is_null())
+        .drop(column(radar.Transplant.id))
+        .with_columns(
+            pl.lit(user_id).alias(column(radar.Transplant.created_user_id)),
+            pl.lit(user_id).alias(column(radar.Transplant.modified_user_id)),
+        )
+    )
+    updated_transplant_rows = all_transplants.filter(
+        pl.col(column(radar.Transplant.id)).is_not_null()
+    )
+    updated_transplant_rows = filter_updated(
+        df_collection["radar"], updated_transplant_rows
+    ).with_columns(
+        pl.lit(user_id).alias(column(radar.Transplant.modified_user_id)),
+        pl.lit(datetime.now(), pl.Datetime).alias(
+            column(radar.Transplant.modified_date)
+        ),
+    )
+    audit_writer.add_table(
+        "reduced transplants", all_transplants, "reduced_transplant_data"
+    )
+    audit_writer.set_ws("transplant_output")
+    audit_writer.add_table(
+        "new transplants",
+        new_transplant_rows,
+        "new_transplant_data",
+    )
+    audit_writer.add_table(
+        "updated transplants",
+        updated_transplant_rows,
+        "updated_transplant_data",
+    )
+
+    audit_writer.add_info(
+        "transplants out",
+        (
+            "total to update/create:",
+            str(len(new_transplant_rows) + len(updated_transplant_rows)),
+        ),
+    )
+    audit_writer.add_info(
+        "transplants out",
+        ("total transplants to update", str(len(updated_transplant_rows))),
+    )
+    audit_writer.add_info(
+        "transplants out",
+        ("total transplants to create", str(len(new_transplant_rows))),
+    )
+
+    return new_transplant_rows, updated_transplant_rows
+
+
+def reduce_and_prioritise_transplants(all_transplants, audit_writer):
+    """
+    Reduce duplicate transplant records by selecting a single authoritative row
+    per patient, modality, and transplant date.
+    When multiple transplant records exist for the same patient/modality/date
+    (typically originating from different data sources), this function:
+        1. Assigns an explicit priority order to each source.
+        2. Sorts records so higher-priority sources are considered first.
+        3. Collapses duplicates by keeping the highest-priority record while
+         preserving associated metadata.
+        4. Restores the original textual source labels for downstream use.
+    """
+
+    audit_writer.add_text(
+        "Grouping and Reducing all Transplants by by selecting a single authoritative row per patient, modality, and transplant date"
+    )
+    # 1. Convert source_type into numeric priority
+    all_transplants = all_transplants.with_columns(
+        pl.col("source_type")
+        .replace(
+            old=["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"],
+            new=["0", "1", "2", "3", "4"],
+        )
+        .cast(pl.Int32)
+    )
+    # 2. Sort so highest priority (largest number) comes first
+    all_transplants = all_transplants.sort(
+        ["patient_id", "modality", "date", "source_type"],
+        descending=[False, False, False, True],  # Only priority sorted descending
+    )
+    # 3. Group by patient, modality, date and select highest-priority row
+    all_transplants = all_transplants.group_by(
+        column(
+            [
+                radar.Transplant.patient_id,
+                radar.Transplant.modality,
+                radar.Transplant.date,
+            ]
+        ),
+        maintain_order=True,
+    ).agg(
+        pl.col("id").drop_nulls().first(),  # best ID
+        **{
+            col: pl.col(col).first()
+            for col in all_transplants.columns
+            if col
+            not in column(
+                [
+                    radar.Transplant.patient_id,
+                    radar.Transplant.modality,
+                    radar.Transplant.date,
+                    radar.Transplant.id,
+                ]
+            )
+        },
+    )
+    # 4. Convert source_type back to text labels
+    all_transplants = all_transplants.with_columns(
+        pl.col(column(radar.Transplant.source_type))
+        .cast(pl.String)
+        .replace(
+            old=["0", "1", "2", "3", "4"],
+            new=["NHSBT LIST", "BATCH", "UKRDC", "RADAR", "RR"],
+        )
+    )
+    return all_transplants
+
+
+def merge_rr_and_radar(audit_writer, df_collection):
+    """
+    this will merge the two dataframes/databases into one based on the columns in rr_to_radar_columns
+
+    """
+    audit_writer.add_text("Transplants in RR and RADAR are merged")
+    audit_writer.set_ws("combined_transplants")
+    filtered_rr_to_radar = {
+        k: v
+        for k, v in rr_to_radar_columns.items()
+        if v not in df_collection["rr"].columns
+    }
+    # adjust any column names before merging
+    df_collection["rr"] = df_collection["rr"].rename(filtered_rr_to_radar)
+    common_cols = [
+        col
+        for col in df_collection["radar"].columns
+        if col in df_collection["rr"].columns
+    ]
+    df_collection["rr"] = df_collection["rr"].select(common_cols)
+    all_transplants = pl.concat(
+        [df_collection["radar"], df_collection["rr"]], how="diagonal_relaxed"
+    )
+    audit_writer.add_table(
+        "transplants from radar and rr have been combined into one table",
+        all_transplants,
+        "all_transplants",
+    )
+    return all_transplants
+
+
 def make_transplant_dfs(
-    sessions: dict[str, Session], radar_patient_map: DataFrame
+    sessions: dict[str, Session],
+    radar_patient_map: DataFrame,
+    audit_writer: AuditWriter | StubObject,
 ) -> dict[str, pl.DataFrame]:
     """
     Convert sessions data into DataFrame collection holding transplants.
@@ -306,6 +301,7 @@ def make_transplant_dfs(
 
     # Extract data for "radar" session convert id to string for polars to work
 
+    audit_writer.add_text("Transplant Process", "Heading 3")
     rr_filter = (
         radar_patient_map.drop_nulls(["rr_no"])
         .unique(subset=["rr_no"])
@@ -326,6 +322,9 @@ def make_transplant_dfs(
     df_collection = {
         "radar": get_data_as_df(sessions["radar"], radar_query, [radar.Transplant])
     }
+    audit_writer.add_info(
+        "transplant", ("radar data loaded", str(len(df_collection["radar"])))
+    )
 
     str_filter = rr_filter.to_list()
 
@@ -353,6 +352,18 @@ def make_transplant_dfs(
             sessions["rr"], rr_query, [nhsbt.UKTTransplant, nhsbt.UKTSites]
         )
         df_collection["rr"] = pl.concat([df_collection["rr"], df_chunk])
+
+    audit_writer.add_info(
+        "transplant", ("rr data loaded", str(len(df_collection["rr"])))
+    )
+
+    audit_writer.set_ws("import_transplant_run")
+    for key, value in df_collection.items():
+        audit_writer.add_table(
+            text=f"Imported {key} transplants",
+            table=value,
+            table_name=f"raw_transplant_{key}",
+        )
 
     return df_collection
 
@@ -417,7 +428,7 @@ def group_and_reduce_transplant_rr(
 
 
 def format_rr_transplants(
-    df_collection: dict[str, pl.DataFrame], radar_patient_id_map, sessions
+    df_collection: dict[str, pl.DataFrame], radar_patient_id_map, sessions, audit_writer
 ):
     """
     Formats transplant data from the 'rr' session.
@@ -430,6 +441,9 @@ def format_rr_transplants(
     Returns:
         dict: A dictionary containing the formatted DataFrame for the 'rr' session.
     """
+    audit_writer.add_text(
+        "Converting RR transplants into common formats, includes patient numbers and modality codes "
+    )
 
     rr_map = radar_patient_id_map.drop_nulls(["rr_no"]).unique(subset=["rr_no"])
 
@@ -452,10 +466,18 @@ def format_rr_transplants(
             column(UKTTransplant.transplant_relationship, UKTTransplant.transplant_sex)
         )
         .with_columns(
-            pl.lit(124).alias(column(radar.Transplant.source_group_id)),
-            pl.lit("RR").alias(column(radar.Transplant.source_type)),
+            pl.lit(124).alias(column(radar.Transplant.source_group_id)),  # type: ignore[arg-type]
+            pl.lit("RR").alias(column(radar.Transplant.source_type)),  # type: ignore[arg-type]
         )
     )
+
+    audit_writer.set_ws("transplant_format")
+    audit_writer.add_table(
+        "RR transplants with radar format ",
+        df_collection["rr"],
+        "format_rr_table",
+    )
+
     return df_collection
 
 
@@ -513,9 +535,9 @@ def get_rr_transplant_modality(rr_df: pl.DataFrame) -> pl.DataFrame:
             .when(trel.is_in(["88", "99"]))
             .then(99)
             .otherwise(None)
-            .alias(column(UKTTransplant.transplant_type))
+            .alias(column(UKTTransplant.transplant_type))  # type: ignore[arg-type]
         )
-        .cast({column(UKTTransplant.transplant_type): pl.Int64})
+        .cast({column(UKTTransplant.transplant_type): pl.Int64})  # type: ignore
         .filter(pl.col(column(UKTTransplant.transplant_type)).is_not_null())
     )
 
@@ -549,7 +571,7 @@ def convert_transplant_unit(df_collection, sessions: dict[str, Session]):
             kmap.get_column("id"),
             default=None,
         )
-        .alias(column(radar.Transplant.source_group_id))
+        .alias(column(radar.Transplant.source_group_id))  # type: ignore[arg-type]
     )
 
     return df_collection
